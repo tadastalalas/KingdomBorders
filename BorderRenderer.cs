@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using TaleWorlds.CampaignSystem;
+using TaleWorlds.Core;
 using TaleWorlds.Engine;
 using TaleWorlds.Library;
 
@@ -59,6 +60,9 @@ namespace KingdomBorders
             }
             mesh.SetMaterial(mat);
 
+            bool hideSea = MCMSettings.Instance?.HideBordersOnSea ?? true;
+            bool hideRivers = MCMSettings.Instance?.HideBordersOnRivers ?? false;
+
             UIntPtr lockHandle = mesh.LockEditDataWrite();
             int quadCount = 0;
 
@@ -66,8 +70,8 @@ namespace KingdomBorders
             {
                 foreach (var (inner2D, outer2D) in builder.Strips)
                 {
-                    var innerPoints = SampleTerrainHeights(inner2D, heightOffset);
-                    var outerPoints = SampleTerrainHeights(outer2D, heightOffset);
+                    var (innerPoints, innerSkip) = SampleTerrainHeightsWithWater(inner2D, heightOffset, hideSea, hideRivers);
+                    var (outerPoints, outerSkip) = SampleTerrainHeightsWithWater(outer2D, heightOffset, hideSea, hideRivers);
 
                     int count = Math.Min(innerPoints.Count, outerPoints.Count);
                     if (count < 2)
@@ -75,6 +79,13 @@ namespace KingdomBorders
 
                     for (int i = 0; i < count - 1; i++)
                     {
+                        // Skip quad if all four corners should be hidden
+                        if (innerSkip[i] && outerSkip[i] &&
+                            innerSkip[i + 1] && outerSkip[i + 1])
+                        {
+                            continue;
+                        }
+
                         Vec3 innerA = innerPoints[i];
                         Vec3 outerA = outerPoints[i];
                         Vec3 innerB = innerPoints[i + 1];
@@ -139,9 +150,13 @@ namespace KingdomBorders
         /// </summary>
         public void UpdateAlphaForCameraDistance(float cameraDistance)
         {
-            const float minVisible = 40f;
-            const float maxVisible = 200f;
+            float minVisible = MCMSettings.Instance?.FadeStartHeight ?? 40;
+            float maxVisible = MCMSettings.Instance?.FullOpacityHeight ?? 200;
             const float maxAlpha = 0.7f;
+
+            // Ensure maxVisible is always above minVisible
+            if (maxVisible <= minVisible)
+                maxVisible = minVisible + 1f;
 
             float alpha;
             if (cameraDistance <= minVisible)
@@ -172,23 +187,17 @@ namespace KingdomBorders
         /// </summary>
         public void ClearForKingdoms(HashSet<Kingdom> kingdoms)
         {
-            var toRemove = new List<BorderEntityEntry>();
-
-            foreach (var entry in _entries)
+            int removed = _entries.RemoveAll(entry =>
             {
                 if (kingdoms.Contains(entry.Kingdom))
                 {
-                    toRemove.Add(entry);
+                    entry.Entity?.Remove(0);
+                    return true;
                 }
-            }
+                return false;
+            });
 
-            foreach (var entry in toRemove)
-            {
-                entry.Entity?.Remove(0);
-                _entries.Remove(entry);
-            }
-
-            ModLog.Log($"Cleared {toRemove.Count} border entities for {kingdoms.Count} kingdoms");
+            ModLog.Log($"Cleared {removed} border entities for {kingdoms.Count} kingdoms");
         }
 
         /// <summary>
@@ -205,20 +214,108 @@ namespace KingdomBorders
 
         public int EntityCount => _entries.Count;
 
-        private List<Vec3> SampleTerrainHeights(List<Vec2> points2D, float heightOffset)
+        private enum WaterType
+        {
+            Land,
+            River,
+            Sea
+        }
+
+        /// <summary>
+        /// Classifies a point as sea, river, or land using the nav mesh.
+        /// Rivers are detected via land-region faces with TerrainType.River.
+        /// Sea is detected when the land face is invalid AND the sea-region face
+        /// has a water terrain type.
+        /// </summary>
+        private WaterType ClassifyPoint(Vec2 p)
+        {
+            var mapSceneWrapper = Campaign.Current.MapSceneWrapper;
+
+            var landPos = new CampaignVec2(p, true);
+            PathFaceRecord landFace = mapSceneWrapper.GetFaceIndex(in landPos);
+
+            if (landFace.IsValid())
+            {
+                TerrainType terrain = mapSceneWrapper.GetFaceTerrainType(landFace);
+                if (terrain == TerrainType.River)
+                    return WaterType.River;
+                if (terrain == TerrainType.Lake || terrain == TerrainType.Water)
+                    return WaterType.Sea;
+
+                return WaterType.Land;
+            }
+
+            // Land face invalid — could be sea or unwalkable terrain (mountains).
+            // Check the sea-region face and only classify as sea if its terrain type
+            // is actually a water type.
+            var seaPos = new CampaignVec2(p, false);
+            PathFaceRecord seaFace = mapSceneWrapper.GetFaceIndex(in seaPos);
+
+            if (seaFace.IsValid())
+            {
+                TerrainType seaTerrain = (TerrainType)seaFace.FaceGroupIndex;
+                if (seaTerrain == TerrainType.Water ||
+                    seaTerrain == TerrainType.Lake ||
+                    seaTerrain == TerrainType.CoastalSea ||
+                    seaTerrain == TerrainType.OpenSea)
+                {
+                    return WaterType.Sea;
+                }
+            }
+
+            return WaterType.Land;
+        }
+
+        /// <summary>
+        /// Samples terrain heights and determines which points should be hidden
+        /// based on MCM settings and water classification.
+        /// </summary>
+        private (List<Vec3> points, List<bool> shouldHide) SampleTerrainHeightsWithWater(
+            List<Vec2> points2D, float heightOffset, bool hideSea, bool hideRivers)
         {
             var points3D = new List<Vec3>(points2D.Count);
+            var hideFlags = new List<bool>(points2D.Count);
+
+            var mapSceneWrapper = Campaign.Current.MapSceneWrapper;
+
+            // If both options are off, skip water queries entirely
+            if (!hideSea && !hideRivers)
+            {
+                foreach (var p in points2D)
+                {
+                    float height = 0f;
+                    var campaignPos = new CampaignVec2(p, false);
+                    mapSceneWrapper.GetHeightAtPoint(in campaignPos, ref height);
+                    points3D.Add(new Vec3(p.x, p.y, height + heightOffset));
+                    hideFlags.Add(false);
+                }
+                return (points3D, hideFlags);
+            }
 
             foreach (var p in points2D)
             {
                 float height = 0f;
                 var campaignPos = new CampaignVec2(p, false);
-                Campaign.Current.MapSceneWrapper.GetHeightAtPoint(in campaignPos, ref height);
-
+                mapSceneWrapper.GetHeightAtPoint(in campaignPos, ref height);
                 points3D.Add(new Vec3(p.x, p.y, height + heightOffset));
+
+                WaterType waterType = ClassifyPoint(p);
+
+                bool hide = false;
+                switch (waterType)
+                {
+                    case WaterType.Sea:
+                        hide = hideSea;
+                        break;
+                    case WaterType.River:
+                        hide = hideRivers;
+                        break;
+                }
+
+                hideFlags.Add(hide);
             }
 
-            return points3D;
+            return (points3D, hideFlags);
         }
     }
 }

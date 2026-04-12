@@ -14,6 +14,7 @@
     <DependedModule Id="Sandbox" />
     <DependedModule Id="StoryMode" />
     <DependedModule Id="CustomBattle" />
+    <DependedModule Id="Bannerlord.MBOptionScreen" />
   </DependedModules>
   <!-- Community Dependency Metadata -->
   <!-- https://github.com/BUTR/Bannerlord.BLSE#community-dependency-metadata -->
@@ -23,6 +24,7 @@
     <DependedModuleMetadata id="Sandbox" order="LoadBeforeThis" />
     <DependedModuleMetadata id="StoryMode" order="LoadBeforeThis" />
     <DependedModuleMetadata id="CustomBattle" order="LoadBeforeThis" />
+    <DependedModuleMetadata id="Bannerlord.MBOptionScreen" order="LoadBeforeThis" />
   </DependedModuleMetadatas>
   <!-- Community Dependency Metadata -->
   <SubModules>

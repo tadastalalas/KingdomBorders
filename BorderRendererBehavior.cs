@@ -48,14 +48,23 @@ namespace KingdomBorders
         private HashSet<Settlement> _pendingRegenSettlements;
         private bool _regenRequested;
 
+        // Track MCM settings to detect changes and trigger rebuild
+        private bool _lastHideSea;
+        private bool _lastHideRivers;
+        private float _lastBorderWidth;
+        private float _lastBorderGap;
+
         public BorderRenderer Renderer { get; private set; }
         public Scene MapScene { get; private set; }
 
         public override void RegisterEvents()
         {
             CampaignEvents.OnGameLoadFinishedEvent.AddNonSerializedListener(this, OnGameLoadFinished);
+            CampaignEvents.OnNewGameCreatedEvent.AddNonSerializedListener(this, OnNewGameCreated);
             CampaignEvents.OnSettlementOwnerChangedEvent.AddNonSerializedListener(this, OnSettlementOwnerChanged);
             CampaignEvents.OnClanChangedKingdomEvent.AddNonSerializedListener(this, OnClanChangedKingdom);
+            CampaignEvents.KingdomDestroyedEvent.AddNonSerializedListener(this, OnKingdomDestroyed);
+            CampaignEvents.KingdomCreatedEvent.AddNonSerializedListener(this, OnKingdomCreated);
         }
 
         public override void SyncData(IDataStore dataStore)
@@ -65,6 +74,29 @@ namespace KingdomBorders
         private void OnGameLoadFinished()
         {
             BeginBuildBorders();
+        }
+
+        private void OnNewGameCreated(CampaignGameStarter starter)
+        {
+            BeginBuildBorders();
+        }
+
+        private void OnKingdomDestroyed(Kingdom kingdom)
+        {
+            if (!_isInitialized || _phase != BuildPhase.Idle)
+                return;
+
+            ModLog.Log($"Kingdom destroyed: {kingdom.Name} — triggering full rebuild");
+            FullRebuild();
+        }
+
+        private void OnKingdomCreated(Kingdom kingdom)
+        {
+            if (!_isInitialized || _phase != BuildPhase.Idle)
+                return;
+
+            ModLog.Log($"Kingdom created: {kingdom.Name} — triggering full rebuild");
+            FullRebuild();
         }
 
         /// <summary>
@@ -109,8 +141,64 @@ namespace KingdomBorders
                             RegenerateForKingdoms(kingdoms, settlements);
                         }
                     }
+                    else if (_isInitialized)
+                    {
+                        CheckMCMSettingsChanged();
+                    }
                     break;
             }
+        }
+
+        /// <summary>
+        /// Detects MCM setting changes that require a full border rebuild.
+        /// </summary>
+        private void CheckMCMSettingsChanged()
+        {
+            var settings = MCMSettings.Instance;
+            if (settings == null)
+                return;
+
+            bool hideSea = settings.HideBordersOnSea;
+            bool hideRivers = settings.HideBordersOnRivers;
+            float borderWidth = settings.BorderWidth;
+            float borderGap = settings.BorderGap;
+
+            if (hideSea != _lastHideSea ||
+                hideRivers != _lastHideRivers ||
+                Math.Abs(borderWidth - _lastBorderWidth) > 0.001f ||
+                Math.Abs(borderGap - _lastBorderGap) > 0.001f)
+            {
+                ModLog.Log($"MCM settings changed — triggering full rebuild");
+                SnapshotMCMSettings();
+                FullRebuild();
+            }
+        }
+
+        private void SnapshotMCMSettings()
+        {
+            var settings = MCMSettings.Instance;
+            if (settings == null)
+                return;
+
+            _lastHideSea = settings.HideBordersOnSea;
+            _lastHideRivers = settings.HideBordersOnRivers;
+            _lastBorderWidth = settings.BorderWidth;
+            _lastBorderGap = settings.BorderGap;
+        }
+
+        /// <summary>
+        /// Clears all existing borders and starts a full rebuild from scratch.
+        /// </summary>
+        private void FullRebuild()
+        {
+            if (Renderer == null)
+                return;
+
+            Renderer.ClearAll();
+            _calculator = new BorderCalculator(resolution: 150);
+            _calculator.CalculateMapBounds();
+            _calculator.BeginBuildTerritoryGrid();
+            _phase = BuildPhase.BuildingGrid;
         }
 
         private void OnSettlementOwnerChanged(Settlement settlement, bool openToClaim,
@@ -251,6 +339,8 @@ namespace KingdomBorders
                     ModLog.Log($"  {k.Name}: color=0x{col:X8}, fiefs={k.Fiefs.Count}");
                 }
 
+                SnapshotMCMSettings();
+
                 _calculator = new BorderCalculator(resolution: 150);
                 _calculator.CalculateMapBounds();
                 _calculator.BeginBuildTerritoryGrid();
@@ -304,6 +394,12 @@ namespace KingdomBorders
         {
             int processed = 0;
 
+            // Read MCM settings for border dimensions
+            float borderGap = MCMSettings.Instance?.BorderGap ?? 0.30f;
+            float borderWidth = MCMSettings.Instance?.BorderWidth ?? 1.05f;
+            float innerOffset = borderGap / 2f;
+            float outerOffset = innerOffset + borderWidth;
+
             while (_pendingIndex < _pendingSegments.Count && processed < SegmentsPerTick)
             {
                 var segment = _pendingSegments[_pendingIndex];
@@ -324,11 +420,19 @@ namespace KingdomBorders
 
                 var smoothed = _calculator.SmoothChaikin(segment.Points, iterations: 2);
 
+                // Trim endpoints inward by innerOffset so strips don't overshoot
+                // into the gap at T-junctions where three kingdoms meet.
+                smoothed = BorderCalculator.TrimPolyline(smoothed, innerOffset);
+
+                if (smoothed.Count < 2)
+                {
+                    _skippedCount++;
+                    continue;
+                }
+
                 var (leftKingdom, rightKingdom) = _calculator.DetermineKingdomSides(
                     smoothed, segment.KingdomA, segment.KingdomB);
 
-                float innerOffset = 0.15f;
-                float outerOffset = 1.2f;
                 var leftLineInner = BorderCalculator.OffsetPolyline(smoothed, innerOffset);
                 var leftLineOuter = BorderCalculator.OffsetPolyline(smoothed, outerOffset);
                 var rightLineInner = BorderCalculator.OffsetPolyline(smoothed, -innerOffset);
@@ -394,15 +498,6 @@ namespace KingdomBorders
             }
             _isInitialized = false;
             _phase = BuildPhase.Idle;
-            _pendingSegments = null;
-            _pendingIndex = 0;
-            _calculator = null;
-            _kingdomBuilders = null;
-            _pendingFlush = null;
-            _pendingRegenKingdoms = null;
-            _pendingRegenSettlements = null;
-            _regenRequested = false;
-            MapScene = null;
         }
     }
 }

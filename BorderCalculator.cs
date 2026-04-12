@@ -696,6 +696,59 @@ namespace KingdomBorders
             return result;
         }
 
+        public static List<Vec2> TrimPolyline(List<Vec2> points, float trimDistance)
+        {
+            if (points.Count < 2 || trimDistance <= 0f)
+                return new List<Vec2>(points);
+
+            var result = new List<Vec2>(points);
+
+            // Trim from start
+            float remaining = trimDistance;
+            while (result.Count >= 2 && remaining > 0f)
+            {
+                Vec2 a = result[0];
+                Vec2 b = result[1];
+                float segLen = a.Distance(b);
+
+                if (segLen <= remaining)
+                {
+                    remaining -= segLen;
+                    result.RemoveAt(0);
+                }
+                else
+                {
+                    Vec2 dir = (b - a).Normalized();
+                    result[0] = a + dir * remaining;
+                    remaining = 0f;
+                }
+            }
+
+            // Trim from end
+            remaining = trimDistance;
+            while (result.Count >= 2 && remaining > 0f)
+            {
+                int last = result.Count - 1;
+                Vec2 a = result[last];
+                Vec2 b = result[last - 1];
+                float segLen = a.Distance(b);
+
+                if (segLen <= remaining)
+                {
+                    remaining -= segLen;
+                    result.RemoveAt(last);
+                }
+                else
+                {
+                    Vec2 dir = (b - a).Normalized();
+                    result[last] = a + dir * remaining;
+                    remaining = 0f;
+                }
+            }
+
+            return result;
+        }
+
         private Vec2 GridToWorld(int x, int y)
         {
             float worldX = _mapMin.x + (x / (float)(_gridResolution - 1)) * (_mapMax.x - _mapMin.x);
