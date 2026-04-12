@@ -10,9 +10,6 @@ using TaleWorlds.Library;
 
 namespace KingdomBorders
 {
-    /// <summary>
-    /// Phases of the border generation pipeline, each spread across ticks.
-    /// </summary>
     internal enum BuildPhase
     {
         Idle,
@@ -35,8 +32,8 @@ namespace KingdomBorders
         private int _pendingIndex;
         private int _renderedCount;
         private int _skippedCount;
-        private const int SegmentsPerTick = 10;
-        private const int GridRowsPerTick = 15;
+        private const int SegmentsPerTick = 15;
+        private const int GridRowsPerTick = 25;
 
         // Per-kingdom mesh builders collected during incremental processing
         private Dictionary<Kingdom, KingdomMeshBuilder> _kingdomBuilders;
@@ -44,7 +41,7 @@ namespace KingdomBorders
         // Incremental flush state
         private List<KingdomMeshBuilder> _pendingFlush;
         private int _flushIndex;
-        private const int KingdomsPerFlushTick = 2;
+        private const int MaxFlushStripsPerTick = 30;
 
         // Queued kingdom regeneration from ownership changes
         private HashSet<Kingdom> _pendingRegenKingdoms;
@@ -77,7 +74,6 @@ namespace KingdomBorders
                 case BuildPhase.BuildingGrid:
                     if (_calculator.BuildTerritoryGridIncremental(GridRowsPerTick))
                     {
-                        // Grid complete — move to edge finding next tick
                         _phase = BuildPhase.FindingEdges;
                     }
                     break;
@@ -224,7 +220,6 @@ namespace KingdomBorders
                 _calculator.CalculateMapBounds();
                 _calculator.BeginBuildTerritoryGrid();
 
-                // Start the incremental pipeline
                 _phase = BuildPhase.BuildingGrid;
             }
             catch (Exception ex)
@@ -234,10 +229,6 @@ namespace KingdomBorders
             }
         }
 
-        /// <summary>
-        /// Called once when grid building finishes. Finds edges + chains in one tick
-        /// (this is fast), then transitions to segment processing.
-        /// </summary>
         private void FindEdgesAndChain()
         {
             var edges = _calculator.FindBorderEdges();
@@ -274,9 +265,6 @@ namespace KingdomBorders
             return builder;
         }
 
-        /// <summary>
-        /// Processes a limited number of segments per tick (lightweight — no terrain sampling here).
-        /// </summary>
         private void ProcessPendingSegments()
         {
             int processed = 0;
@@ -299,7 +287,7 @@ namespace KingdomBorders
                     continue;
                 }
 
-                var smoothed = _calculator.SmoothChaikin(segment.Points, iterations: 3);
+                var smoothed = _calculator.SmoothChaikin(segment.Points, iterations: 2);
 
                 var (leftKingdom, rightKingdom) = _calculator.DetermineKingdomSides(
                     smoothed, segment.KingdomA, segment.KingdomB);
@@ -321,7 +309,6 @@ namespace KingdomBorders
             {
                 _pendingSegments = null;
 
-                // Prepare incremental flush
                 _pendingFlush = new List<KingdomMeshBuilder>(_kingdomBuilders.Values);
                 _flushIndex = 0;
                 _kingdomBuilders = null;
@@ -332,18 +319,23 @@ namespace KingdomBorders
         }
 
         /// <summary>
-        /// Creates kingdom mesh entities a few at a time to spread the terrain sampling
-        /// and mesh creation cost across multiple ticks.
+        /// Flushes kingdom meshes incrementally, limited by strip count per tick
+        /// rather than kingdom count — prevents large kingdoms from causing spikes.
         /// </summary>
         private void FlushKingdomMeshesIncremental()
         {
-            int flushed = 0;
+            int stripsThisTick = 0;
 
-            while (_flushIndex < _pendingFlush.Count && flushed < KingdomsPerFlushTick)
+            while (_flushIndex < _pendingFlush.Count)
             {
                 var builder = _pendingFlush[_flushIndex];
+
+                // Check if this kingdom would exceed the budget
+                if (stripsThisTick > 0 && stripsThisTick + builder.Strips.Count > MaxFlushStripsPerTick)
+                    break; // Wait for next tick
+
                 _flushIndex++;
-                flushed++;
+                stripsThisTick += builder.Strips.Count;
 
                 var entity = Renderer.RenderKingdomStrips(builder, heightOffset: 0.5f);
                 if (entity != null)

@@ -22,6 +22,16 @@ namespace KingdomBorders
         public Kingdom KingdomB;
     }
 
+    /// <summary>
+    /// Pre-cached settlement data to avoid repeated property lookups during grid building.
+    /// </summary>
+    internal struct SettlementEntry
+    {
+        public float X;
+        public float Y;
+        public Kingdom Kingdom;
+    }
+
     public class BorderCalculator
     {
         private readonly int _gridResolution;
@@ -29,8 +39,16 @@ namespace KingdomBorders
         private Vec2 _mapMax;
         private Kingdom[,] _territoryGrid;
 
+        // Pre-cached settlement data for fast grid building
+        private SettlementEntry[] _settlementCache;
+
+        // Spatial lookup grid for settlements — limits comparisons per cell
+        private const int SpatialBucketRes = 20;
+        private List<int>[,] _spatialBuckets;
+        private float _bucketCellW;
+        private float _bucketCellH;
+
         // Incremental grid building state
-        private List<Settlement> _cachedFiefs;
         private int _gridBuildRow;
         private bool _gridBuildComplete;
 
@@ -41,7 +59,6 @@ namespace KingdomBorders
 
         public void CalculateMapBounds()
         {
-            // Include towns, castles, AND villages for more accurate bounds
             var allSettlements = Settlement.All
                 .Where(s => s.IsTown || s.IsCastle || s.IsVillage)
                 .ToList();
@@ -66,56 +83,154 @@ namespace KingdomBorders
         }
 
         /// <summary>
+        /// Builds a flat cache of settlement positions and kingdoms, and a coarse spatial
+        /// lookup grid so each territory cell only needs to compare against nearby settlements.
+        /// </summary>
+        private void BuildSettlementCache()
+        {
+            var fiefs = Settlement.All
+                .Where(s => s.IsTown || s.IsCastle || s.IsVillage)
+                .ToList();
+
+            _settlementCache = new SettlementEntry[fiefs.Count];
+
+            for (int i = 0; i < fiefs.Count; i++)
+            {
+                var s = fiefs[i];
+                Vec2 pos = s.Position.ToVec2();
+                Kingdom kingdom;
+                if (s.IsVillage)
+                    kingdom = s.Village.Bound?.OwnerClan?.Kingdom;
+                else
+                    kingdom = s.OwnerClan?.Kingdom;
+
+                _settlementCache[i] = new SettlementEntry
+                {
+                    X = pos.x,
+                    Y = pos.y,
+                    Kingdom = kingdom
+                };
+            }
+
+            // Build spatial buckets
+            float mapW = _mapMax.x - _mapMin.x;
+            float mapH = _mapMax.y - _mapMin.y;
+            _bucketCellW = mapW / SpatialBucketRes;
+            _bucketCellH = mapH / SpatialBucketRes;
+
+            _spatialBuckets = new List<int>[SpatialBucketRes, SpatialBucketRes];
+            for (int bx = 0; bx < SpatialBucketRes; bx++)
+                for (int by = 0; by < SpatialBucketRes; by++)
+                    _spatialBuckets[bx, by] = new List<int>();
+
+            // Insert each settlement into its bucket and all neighboring buckets
+            // so that edge cells can still find the nearest settlement across bucket boundaries
+            for (int i = 0; i < _settlementCache.Length; i++)
+            {
+                int bx = (int)((_settlementCache[i].X - _mapMin.x) / _bucketCellW);
+                int by = (int)((_settlementCache[i].Y - _mapMin.y) / _bucketCellH);
+                bx = Math.Max(0, Math.Min(SpatialBucketRes - 1, bx));
+                by = Math.Max(0, Math.Min(SpatialBucketRes - 1, by));
+
+                // Add to a 3x3 neighborhood so border cells always find nearby settlements
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    for (int dy = -1; dy <= 1; dy++)
+                    {
+                        int nx = bx + dx;
+                        int ny = by + dy;
+                        if (nx >= 0 && nx < SpatialBucketRes && ny >= 0 && ny < SpatialBucketRes)
+                            _spatialBuckets[nx, ny].Add(i);
+                    }
+                }
+            }
+
+            ModLog.Log($"Settlement cache: {_settlementCache.Length} entries, {SpatialBucketRes}x{SpatialBucketRes} spatial grid");
+        }
+
+        /// <summary>
+        /// Finds the nearest settlement kingdom for a world position using spatial buckets
+        /// and squared distances (no sqrt).
+        /// </summary>
+        private Kingdom FindNearestKingdom(float worldX, float worldY)
+        {
+            int bx = (int)((worldX - _mapMin.x) / _bucketCellW);
+            int by = (int)((worldY - _mapMin.y) / _bucketCellH);
+            bx = Math.Max(0, Math.Min(SpatialBucketRes - 1, bx));
+            by = Math.Max(0, Math.Min(SpatialBucketRes - 1, by));
+
+            var candidates = _spatialBuckets[bx, by];
+            float bestDistSq = float.MaxValue;
+            Kingdom bestKingdom = null;
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                ref var entry = ref _settlementCache[candidates[i]];
+                float dx = worldX - entry.X;
+                float dy = worldY - entry.Y;
+                float distSq = dx * dx + dy * dy;
+
+                if (distSq < bestDistSq)
+                {
+                    bestDistSq = distSq;
+                    bestKingdom = entry.Kingdom;
+                }
+            }
+
+            // Fallback: if bucket was empty (shouldn't happen with 3x3 spread), brute force
+            if (bestKingdom == null && _settlementCache.Length > 0)
+            {
+                for (int i = 0; i < _settlementCache.Length; i++)
+                {
+                    ref var entry = ref _settlementCache[i];
+                    float dx = worldX - entry.X;
+                    float dy = worldY - entry.Y;
+                    float distSq = dx * dx + dy * dy;
+
+                    if (distSq < bestDistSq)
+                    {
+                        bestDistSq = distSq;
+                        bestKingdom = entry.Kingdom;
+                    }
+                }
+            }
+
+            return bestKingdom;
+        }
+
+        /// <summary>
         /// Prepares for incremental grid building. Call BuildTerritoryGridIncremental() each tick.
         /// </summary>
         public void BeginBuildTerritoryGrid()
         {
             _territoryGrid = new Kingdom[_gridResolution, _gridResolution];
-            _cachedFiefs = Settlement.All
-                .Where(s => s.IsTown || s.IsCastle || s.IsVillage)
-                .ToList();
+            BuildSettlementCache();
             _gridBuildRow = 0;
             _gridBuildComplete = false;
-
-            ModLog.Log($"Building grid {_gridResolution}x{_gridResolution} from {_cachedFiefs.Count} fiefs (towns+castles+villages)");
         }
 
         /// <summary>
         /// Builds a limited number of grid rows per call. Returns true when complete.
         /// </summary>
-        public bool BuildTerritoryGridIncremental(int rowsPerTick = 10)
+        public bool BuildTerritoryGridIncremental(int rowsPerTick = 25)
         {
             if (_gridBuildComplete)
                 return true;
 
             int endRow = Math.Min(_gridBuildRow + rowsPerTick, _gridResolution);
+            float mapW = _mapMax.x - _mapMin.x;
+            float mapH = _mapMax.y - _mapMin.y;
+            float invResX = 1f / (_gridResolution - 1);
+            float invResY = 1f / (_gridResolution - 1);
 
             for (int x = _gridBuildRow; x < endRow; x++)
             {
+                float worldX = _mapMin.x + (x * invResX) * mapW;
+
                 for (int y = 0; y < _gridResolution; y++)
                 {
-                    Vec2 worldPos = GridToWorld(x, y);
-
-                    Settlement nearest = null;
-                    float nearestDist = float.MaxValue;
-
-                    foreach (var fief in _cachedFiefs)
-                    {
-                        float dist = worldPos.Distance(fief.Position.ToVec2());
-                        if (dist < nearestDist)
-                        {
-                            nearestDist = dist;
-                            nearest = fief;
-                        }
-                    }
-
-                    if (nearest != null)
-                    {
-                        if (nearest.IsVillage)
-                            _territoryGrid[x, y] = nearest.Village.Bound?.OwnerClan?.Kingdom;
-                        else
-                            _territoryGrid[x, y] = nearest.OwnerClan?.Kingdom;
-                    }
+                    float worldY = _mapMin.y + (y * invResY) * mapH;
+                    _territoryGrid[x, y] = FindNearestKingdom(worldX, worldY);
                 }
             }
 
@@ -124,7 +239,7 @@ namespace KingdomBorders
             if (_gridBuildRow >= _gridResolution)
             {
                 _gridBuildComplete = true;
-                _cachedFiefs = null;
+                _spatialBuckets = null; // Free memory
                 ModLog.Log("Territory grid build complete");
                 return true;
             }
@@ -133,46 +248,31 @@ namespace KingdomBorders
         }
 
         /// <summary>
-        /// Rebuilds the entire grid (used for kingdom regeneration where we need immediate results).
+        /// Rebuilds the entire grid. Refreshes the settlement cache first to pick up
+        /// ownership changes, then uses the same fast spatial lookup.
         /// </summary>
         public bool RebuildTerritoryGridForKingdoms(HashSet<Kingdom> affectedKingdoms)
         {
             if (_territoryGrid == null)
                 return false;
 
-            var fiefs = Settlement.All
-                .Where(s => s.IsTown || s.IsCastle || s.IsVillage)
-                .ToList();
+            // Rebuild cache to pick up new ownership
+            BuildSettlementCache();
 
             bool anyChanged = false;
+            float mapW = _mapMax.x - _mapMin.x;
+            float mapH = _mapMax.y - _mapMin.y;
+            float invResX = 1f / (_gridResolution - 1);
+            float invResY = 1f / (_gridResolution - 1);
 
             for (int x = 0; x < _gridResolution; x++)
             {
+                float worldX = _mapMin.x + (x * invResX) * mapW;
+
                 for (int y = 0; y < _gridResolution; y++)
                 {
-                    Vec2 worldPos = GridToWorld(x, y);
-
-                    Settlement nearest = null;
-                    float nearestDist = float.MaxValue;
-
-                    foreach (var fief in fiefs)
-                    {
-                        float dist = worldPos.Distance(fief.Position.ToVec2());
-                        if (dist < nearestDist)
-                        {
-                            nearestDist = dist;
-                            nearest = fief;
-                        }
-                    }
-
-                    Kingdom newKingdom = null;
-                    if (nearest != null)
-                    {
-                        if (nearest.IsVillage)
-                            newKingdom = nearest.Village.Bound?.OwnerClan?.Kingdom;
-                        else
-                            newKingdom = nearest.OwnerClan?.Kingdom;
-                    }
+                    float worldY = _mapMin.y + (y * invResY) * mapH;
+                    Kingdom newKingdom = FindNearestKingdom(worldX, worldY);
 
                     if (_territoryGrid[x, y] != newKingdom)
                     {
@@ -182,6 +282,7 @@ namespace KingdomBorders
                 }
             }
 
+            _spatialBuckets = null; // Free memory
             return anyChanged;
         }
 
@@ -195,7 +296,6 @@ namespace KingdomBorders
                 {
                     Kingdom current = _territoryGrid[x, y];
 
-                    // Check right neighbor
                     Kingdom right = _territoryGrid[x + 1, y];
                     if (current != right && (current != null || right != null))
                     {
@@ -208,7 +308,6 @@ namespace KingdomBorders
                         });
                     }
 
-                    // Check top neighbor
                     Kingdom top = _territoryGrid[x, y + 1];
                     if (current != top && (current != null || top != null))
                     {
@@ -227,9 +326,6 @@ namespace KingdomBorders
             return edges;
         }
 
-        /// <summary>
-        /// Finds border edges only for segments involving any of the specified kingdoms.
-        /// </summary>
         public List<BorderEdge> FindBorderEdgesForKingdoms(HashSet<Kingdom> kingdoms)
         {
             var edges = new List<BorderEdge>();
@@ -281,7 +377,6 @@ namespace KingdomBorders
         /// </summary>
         public List<BorderSegment> ChainEdges(List<BorderEdge> edges)
         {
-            // Build spatial lookup: endpoint -> list of edges touching that point
             var pointToEdges = new Dictionary<long, List<BorderEdge>>();
 
             foreach (var edge in edges)
@@ -316,9 +411,7 @@ namespace KingdomBorders
                 segment.Points.Add(seed.Start);
                 segment.Points.Add(seed.End);
 
-                // Extend tail
                 ExtendChain(segment, false, pointToEdges, used);
-                // Extend head
                 ExtendChain(segment, true, pointToEdges, used);
 
                 segments.Add(segment);
@@ -381,8 +474,9 @@ namespace KingdomBorders
 
         /// <summary>
         /// Chaikin's corner-cutting algorithm for smoothing polylines.
+        /// Uses 2 iterations to reduce output point count.
         /// </summary>
-        public List<Vec2> SmoothChaikin(List<Vec2> points, int iterations = 3)
+        public List<Vec2> SmoothChaikin(List<Vec2> points, int iterations = 2)
         {
             if (points.Count < 3)
                 return new List<Vec2>(points);
@@ -391,9 +485,8 @@ namespace KingdomBorders
 
             for (int iter = 0; iter < iterations; iter++)
             {
-                var smoothed = new List<Vec2>();
+                var smoothed = new List<Vec2>(result.Count * 2);
 
-                // Keep first point
                 smoothed.Add(result[0]);
 
                 for (int i = 0; i < result.Count - 1; i++)
@@ -401,14 +494,10 @@ namespace KingdomBorders
                     Vec2 p0 = result[i];
                     Vec2 p1 = result[i + 1];
 
-                    Vec2 q = p0 * 0.75f + p1 * 0.25f;
-                    Vec2 r = p0 * 0.25f + p1 * 0.75f;
-
-                    smoothed.Add(q);
-                    smoothed.Add(r);
+                    smoothed.Add(p0 * 0.75f + p1 * 0.25f);
+                    smoothed.Add(p0 * 0.25f + p1 * 0.75f);
                 }
 
-                // Keep last point
                 smoothed.Add(result[result.Count - 1]);
 
                 result = smoothed;
@@ -457,29 +546,21 @@ namespace KingdomBorders
             return _territoryGrid[x, y];
         }
 
-        /// <summary>
-        /// Gets a display color for a kingdom using its primary banner color.
-        /// </summary>
         public static uint GetKingdomColor(Kingdom kingdom)
         {
             if (kingdom == null)
-                return 0x80808080; // Gray for unowned
+                return 0x80808080;
 
             uint color = kingdom.PrimaryBannerColor;
-            // Ensure full alpha
             return color | 0xFF000000;
         }
 
-        /// <summary>
-        /// Offsets a polyline by a perpendicular distance to produce a parallel line.
-        /// Positive offset = left side, negative = right side.
-        /// </summary>
         public static List<Vec2> OffsetPolyline(List<Vec2> points, float offset)
         {
             if (points.Count < 2)
                 return new List<Vec2>(points);
 
-            var result = new List<Vec2>();
+            var result = new List<Vec2>(points.Count);
 
             for (int i = 0; i < points.Count; i++)
             {
