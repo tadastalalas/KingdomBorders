@@ -45,6 +45,7 @@ namespace KingdomBorders
 
         // Queued kingdom regeneration from ownership changes
         private HashSet<Kingdom> _pendingRegenKingdoms;
+        private HashSet<Settlement> _pendingRegenSettlements;
         private bool _regenRequested;
 
         public BorderRenderer Renderer { get; private set; }
@@ -95,11 +96,13 @@ namespace KingdomBorders
                     {
                         _regenRequested = false;
                         var kingdoms = _pendingRegenKingdoms;
+                        var settlements = _pendingRegenSettlements;
                         _pendingRegenKingdoms = null;
+                        _pendingRegenSettlements = null;
 
                         if (kingdoms != null && kingdoms.Count > 0)
                         {
-                            RegenerateForKingdoms(kingdoms);
+                            RegenerateForKingdoms(kingdoms, settlements);
                         }
                     }
                     break;
@@ -126,9 +129,20 @@ namespace KingdomBorders
 
             if (_pendingRegenKingdoms == null)
                 _pendingRegenKingdoms = new HashSet<Kingdom>();
+            if (_pendingRegenSettlements == null)
+                _pendingRegenSettlements = new HashSet<Settlement>();
 
             if (oldKingdom != null) _pendingRegenKingdoms.Add(oldKingdom);
             if (newKingdom != null) _pendingRegenKingdoms.Add(newKingdom);
+
+            // Track the settlement and its bound villages
+            _pendingRegenSettlements.Add(settlement);
+            foreach (var village in settlement.BoundVillages)
+            {
+                if (village?.Settlement != null)
+                    _pendingRegenSettlements.Add(village.Settlement);
+            }
+
             _regenRequested = true;
         }
 
@@ -149,21 +163,38 @@ namespace KingdomBorders
 
             if (_pendingRegenKingdoms == null)
                 _pendingRegenKingdoms = new HashSet<Kingdom>();
+            if (_pendingRegenSettlements == null)
+                _pendingRegenSettlements = new HashSet<Settlement>();
 
             if (oldKingdom != null) _pendingRegenKingdoms.Add(oldKingdom);
             if (newKingdom != null) _pendingRegenKingdoms.Add(newKingdom);
+
+            // Track all fiefs owned by the clan
+            foreach (var s in clan.Settlements)
+            {
+                if (s.IsTown || s.IsCastle)
+                {
+                    _pendingRegenSettlements.Add(s);
+                    foreach (var village in s.BoundVillages)
+                    {
+                        if (village?.Settlement != null)
+                            _pendingRegenSettlements.Add(village.Settlement);
+                    }
+                }
+            }
+
             _regenRequested = true;
         }
 
-        private void RegenerateForKingdoms(HashSet<Kingdom> kingdoms)
+        private void RegenerateForKingdoms(HashSet<Kingdom> kingdoms, HashSet<Settlement> changedSettlements)
         {
             if (Renderer == null || _calculator == null)
                 return;
 
-            ModLog.Log($"Regenerating borders for {kingdoms.Count} kingdoms...");
+            ModLog.Log($"Regenerating borders for {kingdoms.Count} kingdoms, {changedSettlements?.Count ?? 0} changed settlements...");
 
             Renderer.ClearForKingdoms(kingdoms);
-            _calculator.RebuildTerritoryGridForKingdoms(kingdoms);
+            _calculator.RebuildTerritoryGridAroundSettlements(changedSettlements);
 
             var edges = _calculator.FindBorderEdgesForKingdoms(kingdoms);
             if (edges.Count == 0)
@@ -318,10 +349,6 @@ namespace KingdomBorders
             }
         }
 
-        /// <summary>
-        /// Flushes kingdom meshes incrementally, limited by strip count per tick
-        /// rather than kingdom count — prevents large kingdoms from causing spikes.
-        /// </summary>
         private void FlushKingdomMeshesIncremental()
         {
             int stripsThisTick = 0;
@@ -330,9 +357,8 @@ namespace KingdomBorders
             {
                 var builder = _pendingFlush[_flushIndex];
 
-                // Check if this kingdom would exceed the budget
                 if (stripsThisTick > 0 && stripsThisTick + builder.Strips.Count > MaxFlushStripsPerTick)
-                    break; // Wait for next tick
+                    break;
 
                 _flushIndex++;
                 stripsThisTick += builder.Strips.Count;
@@ -370,6 +396,7 @@ namespace KingdomBorders
             _kingdomBuilders = null;
             _pendingFlush = null;
             _pendingRegenKingdoms = null;
+            _pendingRegenSettlements = null;
             _regenRequested = false;
             MapScene = null;
         }

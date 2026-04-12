@@ -286,6 +286,112 @@ namespace KingdomBorders
             return anyChanged;
         }
 
+        /// <summary>
+        /// Rebuilds only the grid cells within a region around the changed settlements.
+        /// Finds the max distance to the nearest neighboring settlement to determine
+        /// how far the ownership change could ripple, then only re-evaluates that area.
+        /// </summary>
+        public bool RebuildTerritoryGridAroundSettlements(HashSet<Settlement> changedSettlements)
+        {
+            if (_territoryGrid == null || changedSettlements == null || changedSettlements.Count == 0)
+                return false;
+
+            // Rebuild the settlement cache to pick up new ownership
+            BuildSettlementCache();
+
+            // Compute bounding box of changed settlements
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minY = float.MaxValue, maxY = float.MinValue;
+
+            foreach (var s in changedSettlements)
+            {
+                Vec2 pos = s.Position.ToVec2();
+                if (pos.x < minX) minX = pos.x;
+                if (pos.x > maxX) maxX = pos.x;
+                if (pos.y < minY) minY = pos.y;
+                if (pos.y > maxY) maxY = pos.y;
+            }
+
+            // Expand by the max distance to the nearest neighbor of any changed settlement.
+            // This is the furthest a Voronoi boundary could shift.
+            float maxNeighborDist = 0f;
+            foreach (var s in changedSettlements)
+            {
+                Vec2 pos = s.Position.ToVec2();
+                float nearestDist = float.MaxValue;
+
+                for (int i = 0; i < _settlementCache.Length; i++)
+                {
+                    ref var entry = ref _settlementCache[i];
+                    float dx = pos.x - entry.X;
+                    float dy = pos.y - entry.Y;
+                    float distSq = dx * dx + dy * dy;
+
+                    // Skip self (distance ~0)
+                    if (distSq > 0.1f && distSq < nearestDist)
+                        nearestDist = distSq;
+                }
+
+                if (nearestDist < float.MaxValue)
+                {
+                    float dist = (float)Math.Sqrt(nearestDist);
+                    if (dist > maxNeighborDist)
+                        maxNeighborDist = dist;
+                }
+            }
+
+            // Expand bounding box by neighbor distance + margin
+            float expand = maxNeighborDist + 10f;
+            minX -= expand;
+            maxX += expand;
+            minY -= expand;
+            maxY += expand;
+
+            // Convert to grid coordinates
+            float mapW = _mapMax.x - _mapMin.x;
+            float mapH = _mapMax.y - _mapMin.y;
+            int gridMinX = (int)(((minX - _mapMin.x) / mapW) * (_gridResolution - 1));
+            int gridMaxX = (int)(((maxX - _mapMin.x) / mapW) * (_gridResolution - 1));
+            int gridMinY = (int)(((minY - _mapMin.y) / mapH) * (_gridResolution - 1));
+            int gridMaxY = (int)(((maxY - _mapMin.y) / mapH) * (_gridResolution - 1));
+
+            // Clamp to grid bounds
+            gridMinX = Math.Max(0, gridMinX);
+            gridMaxX = Math.Min(_gridResolution - 1, gridMaxX);
+            gridMinY = Math.Max(0, gridMinY);
+            gridMaxY = Math.Min(_gridResolution - 1, gridMaxY);
+
+            int cellsUpdated = 0;
+            bool anyChanged = false;
+            float invResX = 1f / (_gridResolution - 1);
+            float invResY = 1f / (_gridResolution - 1);
+
+            for (int x = gridMinX; x <= gridMaxX; x++)
+            {
+                float worldX = _mapMin.x + (x * invResX) * mapW;
+
+                for (int y = gridMinY; y <= gridMaxY; y++)
+                {
+                    float worldY = _mapMin.y + (y * invResY) * mapH;
+                    Kingdom newKingdom = FindNearestKingdom(worldX, worldY);
+
+                    if (_territoryGrid[x, y] != newKingdom)
+                    {
+                        _territoryGrid[x, y] = newKingdom;
+                        anyChanged = true;
+                    }
+                    cellsUpdated++;
+                }
+            }
+
+            _spatialBuckets = null; // Free memory
+
+            int totalCells = _gridResolution * _gridResolution;
+            ModLog.Log($"Partial grid rebuild: {cellsUpdated}/{totalCells} cells ({100f * cellsUpdated / totalCells:F1}%)");
+
+            return anyChanged;
+        }
+
         public List<BorderEdge> FindBorderEdges()
         {
             var edges = new List<BorderEdge>();
