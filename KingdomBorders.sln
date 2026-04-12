@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37111.16 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KingdomBorders", "KingdomBorders.csproj", "{81DF3CFC-D8D2-4BC6-D7B7-0B4DF5C16B99}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{81DF3CFC-D8D2-4BC6-D7B7-0B4DF5C16B99}.Debug|x64.ActiveCfg = Debug|x64
+		{81DF3CFC-D8D2-4BC6-D7B7-0B4DF5C16B99}.Debug|x64.Build.0 = Debug|x64
+		{81DF3CFC-D8D2-4BC6-D7B7-0B4DF5C16B99}.Release|x64.ActiveCfg = Release|x64
+		{81DF3CFC-D8D2-4BC6-D7B7-0B4DF5C16B99}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {8B67E0F9-11AE-46AA-8193-157C3C79CB32}
+	EndGlobalSection
+EndGlobal
