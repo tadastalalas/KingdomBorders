@@ -56,7 +56,6 @@ namespace KingdomBorders
             CampaignEvents.OnGameLoadFinishedEvent.AddNonSerializedListener(this, OnGameLoadFinished);
             CampaignEvents.OnSettlementOwnerChangedEvent.AddNonSerializedListener(this, OnSettlementOwnerChanged);
             CampaignEvents.OnClanChangedKingdomEvent.AddNonSerializedListener(this, OnClanChangedKingdom);
-            CampaignEvents.TickEvent.AddNonSerializedListener(this, OnTick);
         }
 
         public override void SyncData(IDataStore dataStore)
@@ -68,7 +67,12 @@ namespace KingdomBorders
             BeginBuildBorders();
         }
 
-        private void OnTick(float dt)
+        /// <summary>
+        /// Called every application frame from SubModule.OnApplicationTick.
+        /// Drives the build pipeline regardless of campaign tick state,
+        /// so borders generate even while the game is paused on load.
+        /// </summary>
+        public void ApplicationTick()
         {
             switch (_phase)
             {

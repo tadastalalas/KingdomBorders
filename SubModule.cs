@@ -37,7 +37,13 @@ namespace KingdomBorders
         {
             base.OnApplicationTick(dt);
 
-            if (_borderBehavior?.Renderer != null && _borderBehavior.MapScene != null)
+            if (_borderBehavior == null)
+                return;
+
+            // Drive the build pipeline every frame — works even while paused on load
+            _borderBehavior.ApplicationTick();
+
+            if (_borderBehavior.Renderer != null && _borderBehavior.MapScene != null)
             {
                 float cameraHeight = _borderBehavior.MapScene.LastFinalRenderCameraPosition.z;
                 _borderBehavior.Renderer.UpdateAlphaForCameraDistance(cameraHeight);
