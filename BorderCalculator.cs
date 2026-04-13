@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using TaleWorlds.CampaignSystem;
@@ -23,6 +23,38 @@ namespace KingdomBorders
     }
 
     /// <summary>
+    /// Stores information about a segment endpoint arriving at a junction,
+    /// including which side each kingdom is on and the actual strip endpoint positions.
+    /// </summary>
+    public class JunctionArm
+    {
+        public BorderSegment Segment;
+        public bool IsHead; // true = segment's first point is at junction, false = last point
+        public Kingdom LeftKingdom;
+        public Kingdom RightKingdom;
+
+        // Actual strip endpoint positions at the junction end, filled during segment processing.
+        // "Left" strip = the strip on the left side of the smoothed polyline (positive offset).
+        public Vec2 LeftInnerPt;
+        public Vec2 LeftOuterPt;
+        public Vec2 RightInnerPt;
+        public Vec2 RightOuterPt;
+
+        // Direction the segment travels AWAY from the junction (outward direction).
+        public Vec2 OutwardDir;
+    }
+
+    /// <summary>
+    /// A point where 2 or more border segments from different kingdom pairs terminate.
+    /// A third border segment may pass straight through the junction without ending here.
+    /// </summary>
+    public class JunctionInfo
+    {
+        public Vec2 Position;
+        public List<JunctionArm> Arms = new List<JunctionArm>();
+    }
+
+    /// <summary>
     /// Pre-cached settlement data to avoid repeated property lookups during grid building.
     /// </summary>
     internal struct SettlementEntry
@@ -42,7 +74,7 @@ namespace KingdomBorders
         // Pre-cached settlement data for fast grid building
         private SettlementEntry[] _settlementCache;
 
-        // Spatial lookup grid for settlements � limits comparisons per cell
+        // Spatial lookup grid for settlements — limits comparisons per cell
         private const int SpatialBucketRes = 20;
         private List<int>[,] _spatialBuckets;
         private float _bucketCellW;
@@ -580,7 +612,6 @@ namespace KingdomBorders
 
         /// <summary>
         /// Chaikin's corner-cutting algorithm for smoothing polylines.
-        /// Uses 2 iterations to reduce output point count.
         /// </summary>
         public List<Vec2> SmoothChaikin(List<Vec2> points, int iterations = 2)
         {
@@ -749,6 +780,389 @@ namespace KingdomBorders
             return result;
         }
 
+        /// <summary>
+        /// Trims a polyline by independent amounts at each end.
+        /// </summary>
+        public static List<Vec2> TrimPolylineEnds(List<Vec2> points, float headTrim, float tailTrim)
+        {
+            if (points.Count < 2)
+                return new List<Vec2>(points);
+
+            var result = new List<Vec2>(points);
+
+            // Trim from start
+            if (headTrim > 0f)
+            {
+                float remaining = headTrim;
+                while (result.Count >= 2 && remaining > 0f)
+                {
+                    Vec2 a = result[0];
+                    Vec2 b = result[1];
+                    float segLen = a.Distance(b);
+
+                    if (segLen <= remaining)
+                    {
+                        remaining -= segLen;
+                        result.RemoveAt(0);
+                    }
+                    else
+                    {
+                        Vec2 dir = (b - a).Normalized();
+                        result[0] = a + dir * remaining;
+                        remaining = 0f;
+                    }
+                }
+            }
+
+            // Trim from end
+            if (tailTrim > 0f)
+            {
+                float remaining = tailTrim;
+                while (result.Count >= 2 && remaining > 0f)
+                {
+                    int last = result.Count - 1;
+                    Vec2 a = result[last];
+                    Vec2 b = result[last - 1];
+                    float segLen = a.Distance(b);
+
+                    if (segLen <= remaining)
+                    {
+                        remaining -= segLen;
+                        result.RemoveAt(last);
+                    }
+                    else
+                    {
+                        Vec2 dir = (b - a).Normalized();
+                        result[last] = a + dir * remaining;
+                        remaining = 0f;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Detects junctions where 2 or more border segments from different kingdom pairs
+        /// terminate at the same point. The pass-through border (if any) chains straight
+        /// through and doesn't have an endpoint here — only the turning borders do.
+        /// </summary>
+        public List<JunctionInfo> FindJunctions(List<BorderSegment> segments)
+        {
+            // Group segment endpoints by quantized position
+            var endpointMap = new Dictionary<long, List<(BorderSegment segment, bool isHead)>>();
+
+            foreach (var seg in segments)
+            {
+                if (seg.Points.Count < 2)
+                    continue;
+
+                Vec2 head = seg.Points[0];
+                Vec2 tail = seg.Points[seg.Points.Count - 1];
+
+                long headKey = HashPoint(head);
+                long tailKey = HashPoint(tail);
+
+                if (!endpointMap.ContainsKey(headKey))
+                    endpointMap[headKey] = new List<(BorderSegment, bool)>();
+                endpointMap[headKey].Add((seg, true));
+
+                if (!endpointMap.ContainsKey(tailKey))
+                    endpointMap[tailKey] = new List<(BorderSegment, bool)>();
+                endpointMap[tailKey].Add((seg, false));
+            }
+
+            var junctions = new List<JunctionInfo>();
+
+            foreach (var kvp in endpointMap)
+            {
+                // A junction needs at least 2 segment endpoints from different kingdom pairs.
+                // The pass-through border doesn't end here — it chains straight through.
+                if (kvp.Value.Count < 2)
+                    continue;
+
+                // Verify at least 2 different kingdom pairs meet here
+                var pairs = new HashSet<long>();
+                foreach (var (seg, _) in kvp.Value)
+                {
+                    // Create a canonical pair key from the two kingdom hash codes
+                    int hA = seg.KingdomA?.GetHashCode() ?? 0;
+                    int hB = seg.KingdomB?.GetHashCode() ?? 0;
+                    long pairKey = hA < hB
+                        ? ((long)hA << 32) | (uint)hB
+                        : ((long)hB << 32) | (uint)hA;
+                    pairs.Add(pairKey);
+                }
+
+                if (pairs.Count < 2)
+                    continue;
+
+                // Compute average position of all endpoints at this junction
+                Vec2 avgPos = Vec2.Zero;
+                foreach (var (seg, isHead) in kvp.Value)
+                {
+                    Vec2 pt = isHead ? seg.Points[0] : seg.Points[seg.Points.Count - 1];
+                    avgPos += pt;
+                }
+                avgPos *= (1f / kvp.Value.Count);
+
+                var junction = new JunctionInfo { Position = avgPos };
+
+                foreach (var (seg, isHead) in kvp.Value)
+                {
+                    junction.Arms.Add(new JunctionArm
+                    {
+                        Segment = seg,
+                        IsHead = isHead,
+                        LeftKingdom = null,
+                        RightKingdom = null
+                    });
+                }
+
+                junctions.Add(junction);
+            }
+
+            ModLog.Log($"Found {junctions.Count} junctions ({junctions.Sum(j => j.Arms.Count)} turning arms)");
+            return junctions;
+        }
+
+        /// <summary>
+        /// Generates a smooth bevel/miter join strip connecting two strip endpoints at a junction.
+        /// Uses the actual inner→outer perpendicular of each strip endpoint to correctly
+        /// determine which side is concave vs convex, independent of the segment's centerline
+        /// direction. This ensures both kingdoms at a junction get correct rounded corners.
+        /// </summary>
+        public static (List<Vec2> inner, List<Vec2> outer) GenerateJunctionJoin(
+            Vec2 ptA_inner, Vec2 ptA_outer, Vec2 dirA,
+            Vec2 ptB_inner, Vec2 ptB_outer, Vec2 dirB,
+            int curveSegments)
+        {
+            curveSegments = Math.Max(2, curveSegments);
+
+            // Determine which side is concave vs convex by checking whether the outer
+            // points are farther from or closer to the midpoint between the two strip centers.
+            // This works correctly regardless of which side of the border centerline the
+            // kingdom's strip is on.
+            Vec2 midA = (ptA_inner + ptA_outer) * 0.5f;
+            Vec2 midB = (ptB_inner + ptB_outer) * 0.5f;
+            Vec2 junctionMid = (midA + midB) * 0.5f;
+
+            // The "outer" points of the strip face AWAY from the border centerline.
+            // At a convex (outside) turn, outer points are farther from the junction center.
+            // At a concave (inside) turn, outer points are closer to the junction center.
+            float outerDistA = (ptA_outer - junctionMid).LengthSquared;
+            float innerDistA = (ptA_inner - junctionMid).LengthSquared;
+
+            // If outer is farther from junction center → this strip is on the convex (outside)
+            // of the turn → outer gets the Bezier curve, inner gets the miter.
+            // If outer is closer → this strip is on the concave (inside) → swap roles.
+            bool outerIsConvex = outerDistA >= innerDistA;
+
+            Vec2 concaveA, concaveB, convexA, convexB;
+
+            if (outerIsConvex)
+            {
+                // Normal case: inner=concave (miter), outer=convex (curve)
+                concaveA = ptA_inner;
+                concaveB = ptB_inner;
+                convexA = ptA_outer;
+                convexB = ptB_outer;
+            }
+            else
+            {
+                // Flipped case: outer=concave (miter), inner=convex (curve)
+                concaveA = ptA_outer;
+                concaveB = ptB_outer;
+                convexA = ptA_inner;
+                convexB = ptB_inner;
+            }
+
+            // --- Concave side: miter intersection ---
+            Vec2 miterPt;
+            if (!TryLineIntersection(concaveA, dirA, concaveB, dirB, out miterPt))
+            {
+                miterPt = (concaveA + concaveB) * 0.5f;
+            }
+
+            // Clamp miter to avoid extremely long spikes on near-parallel segments
+            float miterDistA = (miterPt - concaveA).Length;
+            float miterDistB = (miterPt - concaveB).Length;
+            float stripWidth = (ptA_outer - ptA_inner).Length;
+            float maxMiter = stripWidth * 3f;
+
+            if (miterDistA > maxMiter || miterDistB > maxMiter)
+            {
+                miterPt = (concaveA + concaveB) * 0.5f;
+            }
+
+            var concavePts = new List<Vec2>(3) { concaveA, miterPt, concaveB };
+
+            // --- Convex side: smooth rounded curve ---
+            Vec2 controlPt;
+            if (!TryLineIntersection(convexA, dirA, convexB, dirB, out controlPt))
+            {
+                controlPt = (convexA + convexB) * 0.5f;
+            }
+
+            float ctrlDistA = (controlPt - convexA).Length;
+            float ctrlDistB = (controlPt - convexB).Length;
+            if (ctrlDistA > maxMiter || ctrlDistB > maxMiter)
+            {
+                controlPt = (convexA + convexB) * 0.5f;
+            }
+
+            var convexPts = new List<Vec2>(curveSegments + 1);
+            for (int i = 0; i <= curveSegments; i++)
+            {
+                float t = (float)i / curveSegments;
+                float oneMinusT = 1f - t;
+                Vec2 pt = convexA * (oneMinusT * oneMinusT)
+                         + controlPt * (2f * oneMinusT * t)
+                         + convexB * (t * t);
+                convexPts.Add(pt);
+            }
+
+            // Resample concave side to match convex point count for the mesh renderer
+            var concaveResampled = ResamplePolyline(concavePts, convexPts.Count);
+
+            // Return in correct inner/outer order
+            if (outerIsConvex)
+                return (concaveResampled, convexPts);   // inner=concave, outer=convex
+            else
+                return (convexPts, concaveResampled);   // inner=convex, outer=concave
+        }
+
+        /// <summary>
+        /// Attempts to find the intersection point of two lines defined by point+direction.
+        /// Returns false if the lines are nearly parallel.
+        /// The directions point AWAY from the junction (outward along the segment).
+        /// We negate them so lines extend TOWARD each other for intersection.
+        /// </summary>
+        private static bool TryLineIntersection(Vec2 p1, Vec2 d1, Vec2 p2, Vec2 d2, out Vec2 intersection)
+        {
+            float dx1 = -d1.x, dy1 = -d1.y;
+            float dx2 = -d2.x, dy2 = -d2.y;
+
+            float denom = dx1 * dy2 - dy1 * dx2;
+
+            if (Math.Abs(denom) < 1e-6f)
+            {
+                intersection = Vec2.Zero;
+                return false;
+            }
+
+            float diffX = p2.x - p1.x;
+            float diffY = p2.y - p1.y;
+            float t = (diffX * dy2 - diffY * dx2) / denom;
+
+            intersection = new Vec2(p1.x + dx1 * t, p1.y + dy1 * t);
+            return true;
+        }
+
+        /// <summary>
+        /// Resamples a polyline to have exactly targetCount evenly-spaced points.
+        /// </summary>
+        private static List<Vec2> ResamplePolyline(List<Vec2> points, int targetCount)
+        {
+            if (points.Count == 0 || targetCount <= 0)
+                return new List<Vec2>();
+
+            if (targetCount == 1)
+                return new List<Vec2> { points[points.Count / 2] };
+
+            float totalLength = 0f;
+            var cumLengths = new List<float>(points.Count) { 0f };
+            for (int i = 1; i < points.Count; i++)
+            {
+                totalLength += points[i].Distance(points[i - 1]);
+                cumLengths.Add(totalLength);
+            }
+
+            if (totalLength < 1e-6f)
+            {
+                var result = new List<Vec2>(targetCount);
+                for (int i = 0; i < targetCount; i++)
+                    result.Add(points[0]);
+                return result;
+            }
+
+            var resampled = new List<Vec2>(targetCount);
+            for (int i = 0; i < targetCount; i++)
+            {
+                float targetDist = (float)i / (targetCount - 1) * totalLength;
+
+                int seg = 0;
+                for (int j = 1; j < cumLengths.Count; j++)
+                {
+                    if (cumLengths[j] >= targetDist)
+                    {
+                        seg = j - 1;
+                        break;
+                    }
+                    seg = j - 1;
+                }
+
+                float segLen = cumLengths[seg + 1] - cumLengths[seg];
+                float t = segLen > 1e-6f ? (targetDist - cumLengths[seg]) / segLen : 0f;
+                t = Math.Max(0f, Math.Min(1f, t));
+
+                resampled.Add(points[seg] * (1f - t) + points[seg + 1] * t);
+            }
+
+            return resampled;
+        }
+
+        /// <summary>
+        /// Checks if a segment endpoint (head or tail) is at any known junction.
+        /// Returns the JunctionArm if found, null otherwise.
+        /// </summary>
+        public JunctionArm FindArmAtJunction(BorderSegment segment, bool checkHead,
+            List<JunctionInfo> junctions, HashSet<long> junctionKeys)
+        {
+            if (junctions == null || junctionKeys == null)
+                return null;
+
+            Vec2 pt = checkHead ? segment.Points[0] : segment.Points[segment.Points.Count - 1];
+            if (!junctionKeys.Contains(HashPoint(pt)))
+                return null;
+
+            foreach (var junction in junctions)
+            {
+                foreach (var arm in junction.Arms)
+                {
+                    if (arm.Segment == segment && arm.IsHead == checkHead)
+                        return arm;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Checks if a segment endpoint (head or tail) is at any known junction.
+        /// </summary>
+        public bool IsEndpointAtJunction(BorderSegment segment, bool checkHead,
+            HashSet<long> junctionKeys)
+        {
+            if (junctionKeys == null)
+                return false;
+
+            Vec2 pt = checkHead ? segment.Points[0] : segment.Points[segment.Points.Count - 1];
+            return junctionKeys.Contains(HashPoint(pt));
+        }
+
+        /// <summary>
+        /// Returns a set of hash keys for all junction positions, for fast lookup.
+        /// </summary>
+        public HashSet<long> GetJunctionKeys(List<JunctionInfo> junctions)
+        {
+            var keys = new HashSet<long>();
+            foreach (var j in junctions)
+            {
+                keys.Add(HashPoint(j.Position));
+            }
+            return keys;
+        }
+
         private Vec2 GridToWorld(int x, int y)
         {
             float worldX = _mapMin.x + (x / (float)(_gridResolution - 1)) * (_mapMax.x - _mapMin.x);
@@ -764,7 +1178,7 @@ namespace KingdomBorders
         private bool SameKingdomPair(BorderEdge edge, BorderSegment segment)
         {
             return (edge.KingdomA == segment.KingdomA && edge.KingdomB == segment.KingdomB) ||
-                   (edge.KingdomA == segment.KingdomB && edge.KingdomB == segment.KingdomA);
+                    (edge.KingdomA == segment.KingdomB && edge.KingdomB == segment.KingdomA);
         }
     }
 }

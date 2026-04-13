@@ -53,6 +53,11 @@ namespace KingdomBorders
         private float _lastBorderWidth;
         private float _lastBorderGap;
         private float _lastHeightOffset;
+        private int _lastCornerSmoothing;
+
+        // Junction data for the current build
+        private List<JunctionInfo> _junctions;
+        private HashSet<long> _junctionKeys;
 
         public BorderRenderer Renderer { get; private set; }
         public Scene MapScene { get; private set; }
@@ -162,11 +167,13 @@ namespace KingdomBorders
             float borderWidth = settings.BorderWidth;
             float borderGap = settings.BorderGap;
             float heightOffset = settings.HeightOffset;
+            int cornerSmoothing = settings.CornerSmoothing;
 
             if (showOnWater != _lastShowOnWater ||
                 Math.Abs(borderWidth - _lastBorderWidth) > 0.001f ||
                 Math.Abs(borderGap - _lastBorderGap) > 0.001f ||
-                Math.Abs(heightOffset - _lastHeightOffset) > 0.001f)
+                Math.Abs(heightOffset - _lastHeightOffset) > 0.001f ||
+                cornerSmoothing != _lastCornerSmoothing)
             {
                 ModLog.Log($"MCM settings changed — triggering full rebuild");
                 SnapshotMCMSettings();
@@ -184,6 +191,7 @@ namespace KingdomBorders
             _lastBorderWidth = settings.BorderWidth;
             _lastBorderGap = settings.BorderGap;
             _lastHeightOffset = settings.HeightOffset;
+            _lastCornerSmoothing = settings.CornerSmoothing;
         }
 
         /// <summary>
@@ -291,6 +299,10 @@ namespace KingdomBorders
 
             var segments = _calculator.ChainEdges(edges);
 
+            // Detect junctions before processing segments
+            _junctions = _calculator.FindJunctions(segments);
+            _junctionKeys = _calculator.GetJunctionKeys(_junctions);
+
             _pendingSegments = segments;
             _pendingIndex = 0;
             _renderedCount = 0;
@@ -360,6 +372,10 @@ namespace KingdomBorders
 
             var segments = _calculator.ChainEdges(edges);
 
+            // Detect junctions before processing segments
+            _junctions = _calculator.FindJunctions(segments);
+            _junctionKeys = _calculator.GetJunctionKeys(_junctions);
+
             ModLog.Log($"Queuing {segments.Count} border segments for incremental rendering...");
 
             _pendingSegments = segments;
@@ -391,6 +407,7 @@ namespace KingdomBorders
             // Read MCM settings for border dimensions
             float borderGap = MCMSettings.Instance?.BorderGap ?? 0.30f;
             float borderWidth = MCMSettings.Instance?.BorderWidth ?? 1.05f;
+            int cornerSmoothing = MCMSettings.Instance?.CornerSmoothing ?? 3;
             float innerOffset = borderGap / 2f;
             float outerOffset = innerOffset + borderWidth;
 
@@ -412,11 +429,20 @@ namespace KingdomBorders
                     continue;
                 }
 
-                var smoothed = _calculator.SmoothChaikin(segment.Points, iterations: 2);
+                var smoothed = _calculator.SmoothChaikin(segment.Points, iterations: cornerSmoothing);
 
-                // Trim endpoints inward by innerOffset so strips don't overshoot
-                // into the gap at T-junctions where three kingdoms meet.
-                smoothed = BorderCalculator.TrimPolyline(smoothed, innerOffset);
+                // Determine trim amount per endpoint:
+                // - At a junction: trim by outerOffset to make room for the join
+                // - Not at junction: trim by innerOffset (original behavior)
+                // Note: pass-through borders chain straight through junctions and
+                // never have endpoints there, so they are unaffected.
+                var headArm = _calculator.FindArmAtJunction(segment, true, _junctions, _junctionKeys);
+                var tailArm = _calculator.FindArmAtJunction(segment, false, _junctions, _junctionKeys);
+
+                float headTrim = headArm != null ? outerOffset : innerOffset;
+                float tailTrim = tailArm != null ? outerOffset : innerOffset;
+
+                smoothed = BorderCalculator.TrimPolylineEnds(smoothed, headTrim, tailTrim);
 
                 if (smoothed.Count < 2)
                 {
@@ -435,12 +461,47 @@ namespace KingdomBorders
                 GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
                 GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
 
+                // Compute outward direction at each junction endpoint.
+                // "Outward" = direction the segment travels AWAY from the junction.
+                if (headArm != null)
+                {
+                    headArm.LeftKingdom = leftKingdom;
+                    headArm.RightKingdom = rightKingdom;
+                    headArm.LeftInnerPt = leftLineInner[0];
+                    headArm.LeftOuterPt = leftLineOuter[0];
+                    headArm.RightInnerPt = rightLineInner[0];
+                    headArm.RightOuterPt = rightLineOuter[0];
+                    // Head is at index 0, so outward = from index 0 toward index 1
+                    Vec2 headDir = (smoothed[1] - smoothed[0]).Normalized();
+                    headArm.OutwardDir = headDir;
+                }
+
+                if (tailArm != null)
+                {
+                    tailArm.LeftKingdom = leftKingdom;
+                    tailArm.RightKingdom = rightKingdom;
+                    int lastIdx = leftLineInner.Count - 1;
+                    tailArm.LeftInnerPt = leftLineInner[lastIdx];
+                    tailArm.LeftOuterPt = leftLineOuter[lastIdx];
+                    tailArm.RightInnerPt = rightLineInner[lastIdx];
+                    tailArm.RightOuterPt = rightLineOuter[lastIdx];
+                    // Tail is at last index, so outward = from last-1 toward last
+                    int lastSmoothed = smoothed.Count - 1;
+                    Vec2 tailDir = (smoothed[lastSmoothed] - smoothed[lastSmoothed - 1]).Normalized();
+                    tailArm.OutwardDir = tailDir;
+                }
+
                 _renderedCount += 2;
             }
 
             if (_pendingIndex >= _pendingSegments.Count)
             {
+                // Generate junction join caps before flushing
+                GenerateJunctionJoins(innerOffset, outerOffset, cornerSmoothing);
+
                 _pendingSegments = null;
+                _junctions = null;
+                _junctionKeys = null;
 
                 _pendingFlush = new List<KingdomMeshBuilder>(_kingdomBuilders.Values);
                 _flushIndex = 0;
@@ -449,6 +510,103 @@ namespace KingdomBorders
 
                 ModLog.Log($"Processed {_renderedCount} strips, skipped {_skippedCount} segments. Flushing {_pendingFlush.Count} kingdom meshes...");
             }
+        }
+
+        /// <summary>
+        /// For each junction, finds pairs of arms that share a kingdom and generates
+        /// a smooth bevel/miter join connecting their strip endpoints.
+        /// </summary>
+        private void GenerateJunctionJoins(float innerOffset, float outerOffset, int cornerSmoothing)
+        {
+            if (_junctions == null || _junctions.Count == 0)
+                return;
+
+            int curveSegments = Math.Max(3, cornerSmoothing * 3);
+            int joinsGenerated = 0;
+
+            foreach (var junction in _junctions)
+            {
+                if (junction.Arms.Count < 2)
+                    continue;
+
+                // Collect all kingdoms present at this junction
+                var kingdomsAtJunction = new HashSet<Kingdom>();
+                foreach (var arm in junction.Arms)
+                {
+                    if (arm.LeftKingdom != null) kingdomsAtJunction.Add(arm.LeftKingdom);
+                    if (arm.RightKingdom != null) kingdomsAtJunction.Add(arm.RightKingdom);
+                }
+
+                foreach (var kingdom in kingdomsAtJunction)
+                {
+                    if (kingdom == null)
+                        continue;
+
+                    // Collect strip endpoints and outward directions for this kingdom
+                    var stripEnds = new List<(Vec2 inner, Vec2 outer, Vec2 outwardDir, float angle)>();
+
+                    foreach (var arm in junction.Arms)
+                    {
+                        if (arm.LeftKingdom == kingdom)
+                        {
+                            Vec2 mid = (arm.LeftInnerPt + arm.LeftOuterPt) * 0.5f;
+                            float angle = (float)Math.Atan2(
+                                mid.y - junction.Position.y,
+                                mid.x - junction.Position.x);
+                            stripEnds.Add((arm.LeftInnerPt, arm.LeftOuterPt, arm.OutwardDir, angle));
+                        }
+                        else if (arm.RightKingdom == kingdom)
+                        {
+                            Vec2 mid = (arm.RightInnerPt + arm.RightOuterPt) * 0.5f;
+                            float angle = (float)Math.Atan2(
+                                mid.y - junction.Position.y,
+                                mid.x - junction.Position.x);
+                            stripEnds.Add((arm.RightInnerPt, arm.RightOuterPt, arm.OutwardDir, angle));
+                        }
+                    }
+
+                    if (stripEnds.Count < 2)
+                        continue;
+
+                    // Sort by angle around the junction center
+                    stripEnds.Sort((a, b) => a.angle.CompareTo(b.angle));
+
+                    if (stripEnds.Count == 2)
+                    {
+                        var join = BorderCalculator.GenerateJunctionJoin(
+                            stripEnds[0].inner, stripEnds[0].outer, stripEnds[0].outwardDir,
+                            stripEnds[1].inner, stripEnds[1].outer, stripEnds[1].outwardDir,
+                            curveSegments);
+
+                        if (join.inner != null && join.inner.Count >= 2)
+                        {
+                            GetBuilder(kingdom).Strips.Add((join.inner, join.outer));
+                            joinsGenerated++;
+                        }
+                    }
+                    else
+                    {
+                        // 3+ strip endpoints: connect adjacent pairs around the junction
+                        for (int i = 0; i < stripEnds.Count; i++)
+                        {
+                            int next = (i + 1) % stripEnds.Count;
+
+                            var join = BorderCalculator.GenerateJunctionJoin(
+                                stripEnds[i].inner, stripEnds[i].outer, stripEnds[i].outwardDir,
+                                stripEnds[next].inner, stripEnds[next].outer, stripEnds[next].outwardDir,
+                                curveSegments);
+
+                            if (join.inner != null && join.inner.Count >= 2)
+                            {
+                                GetBuilder(kingdom).Strips.Add((join.inner, join.outer));
+                                joinsGenerated++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            ModLog.Log($"Generated {joinsGenerated} junction join strips");
         }
 
         private void FlushKingdomMeshesIncremental()
