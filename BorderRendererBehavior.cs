@@ -52,6 +52,7 @@ namespace KingdomBorders
         private bool _lastShowOnWater;
         private float _lastBorderWidth;
         private float _lastBorderGap;
+        private float _lastHeightOffset;
 
         public BorderRenderer Renderer { get; private set; }
         public Scene MapScene { get; private set; }
@@ -160,10 +161,12 @@ namespace KingdomBorders
             bool showOnWater = settings.ShowBordersOnWater;
             float borderWidth = settings.BorderWidth;
             float borderGap = settings.BorderGap;
+            float heightOffset = settings.HeightOffset;
 
             if (showOnWater != _lastShowOnWater ||
                 Math.Abs(borderWidth - _lastBorderWidth) > 0.001f ||
-                Math.Abs(borderGap - _lastBorderGap) > 0.001f)
+                Math.Abs(borderGap - _lastBorderGap) > 0.001f ||
+                Math.Abs(heightOffset - _lastHeightOffset) > 0.001f)
             {
                 ModLog.Log($"MCM settings changed — triggering full rebuild");
                 SnapshotMCMSettings();
@@ -180,6 +183,7 @@ namespace KingdomBorders
             _lastShowOnWater = settings.ShowBordersOnWater;
             _lastBorderWidth = settings.BorderWidth;
             _lastBorderGap = settings.BorderGap;
+            _lastHeightOffset = settings.HeightOffset;
         }
 
         /// <summary>
@@ -204,31 +208,30 @@ namespace KingdomBorders
             if (!_isInitialized || _phase != BuildPhase.Idle)
                 return;
 
-            if (!settlement.IsTown && !settlement.IsCastle)
+            var oldKingdom = oldOwner?.Clan?.Kingdom;
+            var newKingdom = newOwner?.Clan?.Kingdom;
+
+            if (oldKingdom == null && newKingdom == null)
                 return;
-
-            Kingdom oldKingdom = oldOwner?.Clan?.Kingdom;
-            Kingdom newKingdom = newOwner?.Clan?.Kingdom;
-
-            if (oldKingdom == newKingdom)
-                return;
-
-            ModLog.Log($"Settlement owner changed: {settlement.Name} from {oldKingdom?.Name} to {newKingdom?.Name}");
 
             if (_pendingRegenKingdoms == null)
+            {
                 _pendingRegenKingdoms = new HashSet<Kingdom>();
-            if (_pendingRegenSettlements == null)
                 _pendingRegenSettlements = new HashSet<Settlement>();
+            }
 
             if (oldKingdom != null) _pendingRegenKingdoms.Add(oldKingdom);
             if (newKingdom != null) _pendingRegenKingdoms.Add(newKingdom);
 
-            // Track the settlement and its bound villages
+            // Track the specific settlement and its villages
             _pendingRegenSettlements.Add(settlement);
-            foreach (var village in settlement.BoundVillages)
+            if (settlement.BoundVillages != null)
             {
-                if (village?.Settlement != null)
-                    _pendingRegenSettlements.Add(village.Settlement);
+                foreach (var village in settlement.BoundVillages)
+                {
+                    if (village?.Settlement != null)
+                        _pendingRegenSettlements.Add(village.Settlement);
+                }
             }
 
             _regenRequested = true;
@@ -240,19 +243,14 @@ namespace KingdomBorders
             if (!_isInitialized || _phase != BuildPhase.Idle)
                 return;
 
-            if (oldKingdom == newKingdom)
+            if (oldKingdom == null && newKingdom == null)
                 return;
-
-            bool hasFiefs = clan.Settlements.Any(s => s.IsTown || s.IsCastle);
-            if (!hasFiefs)
-                return;
-
-            ModLog.Log($"Clan changed kingdom: {clan.Name} from {oldKingdom?.Name} to {newKingdom?.Name}");
 
             if (_pendingRegenKingdoms == null)
+            {
                 _pendingRegenKingdoms = new HashSet<Kingdom>();
-            if (_pendingRegenSettlements == null)
                 _pendingRegenSettlements = new HashSet<Settlement>();
+            }
 
             if (oldKingdom != null) _pendingRegenKingdoms.Add(oldKingdom);
             if (newKingdom != null) _pendingRegenKingdoms.Add(newKingdom);
@@ -456,6 +454,7 @@ namespace KingdomBorders
         private void FlushKingdomMeshesIncremental()
         {
             int stripsThisTick = 0;
+            float heightOffset = MCMSettings.Instance?.HeightOffset ?? 0.55f;
 
             while (_flushIndex < _pendingFlush.Count)
             {
@@ -467,7 +466,7 @@ namespace KingdomBorders
                 _flushIndex++;
                 stripsThisTick += builder.Strips.Count;
 
-                var entity = Renderer.RenderKingdomStrips(builder, heightOffset: 0.15f);
+                var entity = Renderer.RenderKingdomStrips(builder, heightOffset);
                 if (entity != null)
                 {
                     ModLog.Log($"  {builder.Kingdom.Name}: {builder.Strips.Count} strips");

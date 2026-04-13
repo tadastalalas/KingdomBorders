@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Version>1.0.4</Version>
+    <Version>1.0.5</Version>
     <TargetFrameworks>net472;net6</TargetFrameworks>
     <Platforms>x64</Platforms>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
@@ -58,6 +58,12 @@
       <HintPath>%(Identity)</HintPath>
       <Private>False</Private>
     </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="BLSource\**" />
+    <EmbeddedResource Remove="BLSource\**" />
+    <None Remove="BLSource\**" />
   </ItemGroup>
 
   <ItemGroup>

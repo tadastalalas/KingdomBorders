@@ -18,9 +18,9 @@ namespace KingdomBorders
         public override string FormatType
         { get { return "json2"; } }
 
-        [SettingPropertyInteger("Fade Start Height", 0, 300, Order = 0, RequireRestart = false, HintText = "Camera height at which borders start to become visible. Lower values make borders appear when zoomed in closer. [Default: 60]")]
+        [SettingPropertyInteger("Fade Start Height", 0, 300, Order = 0, RequireRestart = false, HintText = "Camera height at which borders start to become visible. Lower values make borders appear when zoomed in closer. [Default: 50]")]
         [SettingPropertyGroup("Visibility", GroupOrder = 0)]
-        public int FadeStartHeight { get; set; } = 60;
+        public int FadeStartHeight { get; set; } = 50;
 
         [SettingPropertyInteger("Full Opacity Height", 50, 500, Order = 1, RequireRestart = false, HintText = "Camera height at which borders reach full opacity. [Default: 400]")]
         [SettingPropertyGroup("Visibility", GroupOrder = 0)]
@@ -34,8 +34,12 @@ namespace KingdomBorders
         [SettingPropertyGroup("Appearance", GroupOrder = 1)]
         public float BorderGap { get; set; } = 0.30f;
 
-        [SettingPropertyBool("Show Borders on Water", Order = 0, RequireRestart = false, HintText = "Renders borders over water surfaces. This causes water surface transparent. [Default: disabled]")]
+        [SettingPropertyFloatingInteger("Height Offset", 0.1f, 3.0f, "#0.00", Order = 2, RequireRestart = false, HintText = "How far above the terrain surface the border is raised. Increase if borders clip into mountains. [Default: 0.55]")]
+        [SettingPropertyGroup("Appearance", GroupOrder = 1)]
+        public float HeightOffset { get; set; } = 0.55f;
+
+        [SettingPropertyBool("Show Borders on Water", Order = 0, RequireRestart = false, HintText = "Renders borders over water surfaces. [Default: enabled]")]
         [SettingPropertyGroup("Experimental", GroupOrder = 99)]
-        public bool ShowBordersOnWater { get; set; } = false;
+        public bool ShowBordersOnWater { get; set; } = true;
     }
 }

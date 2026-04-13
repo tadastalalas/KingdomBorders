@@ -58,17 +58,24 @@ namespace KingdomBorders
             // Create a copy so we don't modify the shared resource material.
             Material borderMat = mat.CreateCopy();
 
+            // Always prevent depth buffer writes so we never make the water
+            // surface transparent (the water shader reads the depth buffer).
+            borderMat.Flags |= MaterialFlags.NoModifyDepthBuffer;
+
             if (hideWater)
             {
                 // Default mode: borders hidden on water.
-                // - NoModifyDepthBuffer: prevents alpha bleed-through that makes
-                //   the water surface transparent where borders overlap.
-                // - NoDepthTest: renders borders without depth testing, which fixes
-                //   minor clipping with trees and mountain geometry.
-                borderMat.Flags |= MaterialFlags.NoModifyDepthBuffer | MaterialFlags.NoDepthTest;
+                // NoDepthTest renders borders without depth testing, which fixes
+                // minor clipping with trees and mountain geometry.
+                borderMat.Flags |= MaterialFlags.NoDepthTest;
             }
-            // Experimental show-on-water mode: no flag changes.
-            // Borders render on top of water but alpha bleed-through is present.
+            else
+            {
+                // Show-on-water mode: AlwaysDepthTest (engine name: render_after_postfx)
+                // draws in a late pass that runs AFTER the water surface has been fully
+                // composited, so borders appear on top of water rather than beneath it.
+                borderMat.Flags |= MaterialFlags.AlwaysDepthTest;
+            }
 
             Mesh mesh = Mesh.CreateMesh(editable: true);
             if (mesh == null)
@@ -266,7 +273,8 @@ namespace KingdomBorders
 
         /// <summary>
         /// Samples terrain heights and determines which points should be hidden
-        /// based on the water hiding setting.
+        /// based on the water hiding setting. When showing on water, water points
+        /// are raised to the water surface level so they aren't hidden beneath it.
         /// </summary>
         private (List<Vec3> points, List<bool> shouldHide) SampleTerrainHeightsWithWater(
             List<Vec2> points2D, float heightOffset, bool hideWater)
@@ -276,7 +284,7 @@ namespace KingdomBorders
 
             var mapSceneWrapper = Campaign.Current.MapSceneWrapper;
 
-            // If hiding is off, skip water queries entirely
+            // If hiding is off (show on water), sample water surface height for water points
             if (!hideWater)
             {
                 foreach (var p in points2D)
@@ -284,6 +292,17 @@ namespace KingdomBorders
                     float height = 0f;
                     var campaignPos = new CampaignVec2(p, false);
                     mapSceneWrapper.GetHeightAtPoint(in campaignPos, ref height);
+
+                    // Check if this point is over water and raise it to the water surface
+                    if (IsWaterPoint(p))
+                    {
+                        float waterLevel = _scene.GetWaterLevelAtPosition(p, false, true);
+                        if (waterLevel > height)
+                        {
+                            height = waterLevel;
+                        }
+                    }
+
                     points3D.Add(new Vec3(p.x, p.y, height + heightOffset));
                     hideFlags.Add(false);
                 }
