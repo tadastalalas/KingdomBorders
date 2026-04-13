@@ -49,7 +49,7 @@ namespace KingdomBorders
         private bool _regenRequested;
 
         // Track MCM settings to detect changes and trigger rebuild
-        private bool _lastHideWater;
+        private bool _lastShowOnWater;
         private float _lastBorderWidth;
         private float _lastBorderGap;
 
@@ -157,11 +157,11 @@ namespace KingdomBorders
             if (settings == null)
                 return;
 
-            bool hideWater = settings.HideBordersOnWater;
+            bool showOnWater = settings.ShowBordersOnWater;
             float borderWidth = settings.BorderWidth;
             float borderGap = settings.BorderGap;
 
-            if (hideWater != _lastHideWater ||
+            if (showOnWater != _lastShowOnWater ||
                 Math.Abs(borderWidth - _lastBorderWidth) > 0.001f ||
                 Math.Abs(borderGap - _lastBorderGap) > 0.001f)
             {
@@ -177,7 +177,7 @@ namespace KingdomBorders
             if (settings == null)
                 return;
 
-            _lastHideWater = settings.HideBordersOnWater;
+            _lastShowOnWater = settings.ShowBordersOnWater;
             _lastBorderWidth = settings.BorderWidth;
             _lastBorderGap = settings.BorderGap;
         }

@@ -52,26 +52,23 @@ namespace KingdomBorders
                 return null;
             }
 
-            bool hideWater = MCMSettings.Instance?.HideBordersOnWater ?? true;
+            bool showOnWater = MCMSettings.Instance?.ShowBordersOnWater ?? false;
+            bool hideWater = !showOnWater;
 
             // Create a copy so we don't modify the shared resource material.
             Material borderMat = mat.CreateCopy();
 
             if (hideWater)
             {
-                // When hiding borders on water: NoModifyDepthBuffer prevents alpha
-                // bleed-through, RenderOrderPlus_1 ensures borders render behind water.
-                borderMat.Flags |= MaterialFlags.NoModifyDepthBuffer | MaterialFlags.RenderOrderPlus_1;
-            }
-            else
-            {
-                // When showing borders over water:
-                // - NoModifyDepthBuffer: don't write depth, prevents alpha bleed-through
-                //   that makes the water surface transparent.
-                // - NoDepthTest: ignore depth buffer when rendering, so the water shader
-                //   can't block the border mesh. Borders render on top of everything.
+                // Default mode: borders hidden on water.
+                // - NoModifyDepthBuffer: prevents alpha bleed-through that makes
+                //   the water surface transparent where borders overlap.
+                // - NoDepthTest: renders borders without depth testing, which fixes
+                //   minor clipping with trees and mountain geometry.
                 borderMat.Flags |= MaterialFlags.NoModifyDepthBuffer | MaterialFlags.NoDepthTest;
             }
+            // Experimental show-on-water mode: no flag changes.
+            // Borders render on top of water but alpha bleed-through is present.
 
             Mesh mesh = Mesh.CreateMesh(editable: true);
             if (mesh == null)
@@ -269,7 +266,7 @@ namespace KingdomBorders
 
         /// <summary>
         /// Samples terrain heights and determines which points should be hidden
-        /// based on the MCM water hiding setting.
+        /// based on the water hiding setting.
         /// </summary>
         private (List<Vec3> points, List<bool> shouldHide) SampleTerrainHeightsWithWater(
             List<Vec2> points2D, float heightOffset, bool hideWater)
