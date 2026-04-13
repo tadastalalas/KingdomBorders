@@ -49,8 +49,7 @@ namespace KingdomBorders
         private bool _regenRequested;
 
         // Track MCM settings to detect changes and trigger rebuild
-        private bool _lastHideSea;
-        private bool _lastHideRivers;
+        private bool _lastHideWater;
         private float _lastBorderWidth;
         private float _lastBorderGap;
 
@@ -158,13 +157,11 @@ namespace KingdomBorders
             if (settings == null)
                 return;
 
-            bool hideSea = settings.HideBordersOnSea;
-            bool hideRivers = settings.HideBordersOnRivers;
+            bool hideWater = settings.HideBordersOnWater;
             float borderWidth = settings.BorderWidth;
             float borderGap = settings.BorderGap;
 
-            if (hideSea != _lastHideSea ||
-                hideRivers != _lastHideRivers ||
+            if (hideWater != _lastHideWater ||
                 Math.Abs(borderWidth - _lastBorderWidth) > 0.001f ||
                 Math.Abs(borderGap - _lastBorderGap) > 0.001f)
             {
@@ -180,8 +177,7 @@ namespace KingdomBorders
             if (settings == null)
                 return;
 
-            _lastHideSea = settings.HideBordersOnSea;
-            _lastHideRivers = settings.HideBordersOnRivers;
+            _lastHideWater = settings.HideBordersOnWater;
             _lastBorderWidth = settings.BorderWidth;
             _lastBorderGap = settings.BorderGap;
         }
@@ -471,7 +467,7 @@ namespace KingdomBorders
                 _flushIndex++;
                 stripsThisTick += builder.Strips.Count;
 
-                var entity = Renderer.RenderKingdomStrips(builder, heightOffset: 0.5f);
+                var entity = Renderer.RenderKingdomStrips(builder, heightOffset: 0.15f);
                 if (entity != null)
                 {
                     ModLog.Log($"  {builder.Kingdom.Name}: {builder.Strips.Count} strips");

@@ -18,13 +18,9 @@ namespace KingdomBorders
         public override string FormatType
         { get { return "json2"; } }
 
-        [SettingPropertyBool("Hide Borders on Sea/Lakes", Order = 0, RequireRestart = false, HintText = "Prevents border lines from rendering over open water and lakes. [Default: enabled]")]
+        [SettingPropertyBool("Hide Borders on Water", Order = 0, RequireRestart = false, HintText = "Hides border lines over water surfaces (sea, lakes and rivers). When disabled, borders are still visible behind the water. [Default: enabled]")]
         [SettingPropertyGroup("Water Rendering", GroupOrder = 0)]
-        public bool HideBordersOnSea { get; set; } = true;
-
-        [SettingPropertyBool("Hide Borders on Rivers", Order = 1, RequireRestart = false, HintText = "Prevents border lines from rendering over rivers. [Default: disabled]")]
-        [SettingPropertyGroup("Water Rendering", GroupOrder = 0)]
-        public bool HideBordersOnRivers { get; set; } = false;
+        public bool HideBordersOnWater { get; set; } = true;
 
         [SettingPropertyInteger("Fade Start Height", 0, 300, Order = 0, RequireRestart = false, HintText = "Camera height at which borders start to become visible. Lower values make borders appear when zoomed in closer. [Default: 40]")]
         [SettingPropertyGroup("Visibility", GroupOrder = 1)]

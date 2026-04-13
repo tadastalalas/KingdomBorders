@@ -52,16 +52,34 @@ namespace KingdomBorders
                 return null;
             }
 
+            bool hideWater = MCMSettings.Instance?.HideBordersOnWater ?? true;
+
+            // Create a copy so we don't modify the shared resource material.
+            Material borderMat = mat.CreateCopy();
+
+            if (hideWater)
+            {
+                // When hiding borders on water: NoModifyDepthBuffer prevents alpha
+                // bleed-through, RenderOrderPlus_1 ensures borders render behind water.
+                borderMat.Flags |= MaterialFlags.NoModifyDepthBuffer | MaterialFlags.RenderOrderPlus_1;
+            }
+            else
+            {
+                // When showing borders over water:
+                // - NoModifyDepthBuffer: don't write depth, prevents alpha bleed-through
+                //   that makes the water surface transparent.
+                // - NoDepthTest: ignore depth buffer when rendering, so the water shader
+                //   can't block the border mesh. Borders render on top of everything.
+                borderMat.Flags |= MaterialFlags.NoModifyDepthBuffer | MaterialFlags.NoDepthTest;
+            }
+
             Mesh mesh = Mesh.CreateMesh(editable: true);
             if (mesh == null)
             {
                 ModLog.Log("FAIL: Mesh.CreateMesh returned null");
                 return null;
             }
-            mesh.SetMaterial(mat);
-
-            bool hideSea = MCMSettings.Instance?.HideBordersOnSea ?? true;
-            bool hideRivers = MCMSettings.Instance?.HideBordersOnRivers ?? false;
+            mesh.SetMaterial(borderMat);
 
             UIntPtr lockHandle = mesh.LockEditDataWrite();
             int quadCount = 0;
@@ -70,8 +88,8 @@ namespace KingdomBorders
             {
                 foreach (var (inner2D, outer2D) in builder.Strips)
                 {
-                    var (innerPoints, innerSkip) = SampleTerrainHeightsWithWater(inner2D, heightOffset, hideSea, hideRivers);
-                    var (outerPoints, outerSkip) = SampleTerrainHeightsWithWater(outer2D, heightOffset, hideSea, hideRivers);
+                    var (innerPoints, innerSkip) = SampleTerrainHeightsWithWater(inner2D, heightOffset, hideWater);
+                    var (outerPoints, outerSkip) = SampleTerrainHeightsWithWater(outer2D, heightOffset, hideWater);
 
                     int count = Math.Min(innerPoints.Count, outerPoints.Count);
                     if (count < 2)
@@ -214,20 +232,11 @@ namespace KingdomBorders
 
         public int EntityCount => _entries.Count;
 
-        private enum WaterType
-        {
-            Land,
-            River,
-            Sea
-        }
-
         /// <summary>
-        /// Classifies a point as sea, river, or land using the nav mesh.
-        /// Rivers are detected via land-region faces with TerrainType.River.
-        /// Sea is detected when the land face is invalid AND the sea-region face
-        /// has a water terrain type.
+        /// Returns true if the given point is over any water surface
+        /// (sea, lake, river, or coastal water).
         /// </summary>
-        private WaterType ClassifyPoint(Vec2 p)
+        private bool IsWaterPoint(Vec2 p)
         {
             var mapSceneWrapper = Campaign.Current.MapSceneWrapper;
 
@@ -237,49 +246,41 @@ namespace KingdomBorders
             if (landFace.IsValid())
             {
                 TerrainType terrain = mapSceneWrapper.GetFaceTerrainType(landFace);
-                if (terrain == TerrainType.River)
-                    return WaterType.River;
-                if (terrain == TerrainType.Lake || terrain == TerrainType.Water)
-                    return WaterType.Sea;
-
-                return WaterType.Land;
+                return terrain == TerrainType.River ||
+                       terrain == TerrainType.Lake ||
+                       terrain == TerrainType.Water;
             }
 
-            // Land face invalid — could be sea or unwalkable terrain (mountains).
-            // Check the sea-region face and only classify as sea if its terrain type
-            // is actually a water type.
+            // Land face invalid — check sea-region face for water terrain types.
             var seaPos = new CampaignVec2(p, false);
             PathFaceRecord seaFace = mapSceneWrapper.GetFaceIndex(in seaPos);
 
             if (seaFace.IsValid())
             {
                 TerrainType seaTerrain = (TerrainType)seaFace.FaceGroupIndex;
-                if (seaTerrain == TerrainType.Water ||
-                    seaTerrain == TerrainType.Lake ||
-                    seaTerrain == TerrainType.CoastalSea ||
-                    seaTerrain == TerrainType.OpenSea)
-                {
-                    return WaterType.Sea;
-                }
+                return seaTerrain == TerrainType.Water ||
+                       seaTerrain == TerrainType.Lake ||
+                       seaTerrain == TerrainType.CoastalSea ||
+                       seaTerrain == TerrainType.OpenSea;
             }
 
-            return WaterType.Land;
+            return false;
         }
 
         /// <summary>
         /// Samples terrain heights and determines which points should be hidden
-        /// based on MCM settings and water classification.
+        /// based on the MCM water hiding setting.
         /// </summary>
         private (List<Vec3> points, List<bool> shouldHide) SampleTerrainHeightsWithWater(
-            List<Vec2> points2D, float heightOffset, bool hideSea, bool hideRivers)
+            List<Vec2> points2D, float heightOffset, bool hideWater)
         {
             var points3D = new List<Vec3>(points2D.Count);
             var hideFlags = new List<bool>(points2D.Count);
 
             var mapSceneWrapper = Campaign.Current.MapSceneWrapper;
 
-            // If both options are off, skip water queries entirely
-            if (!hideSea && !hideRivers)
+            // If hiding is off, skip water queries entirely
+            if (!hideWater)
             {
                 foreach (var p in points2D)
                 {
@@ -298,21 +299,7 @@ namespace KingdomBorders
                 var campaignPos = new CampaignVec2(p, false);
                 mapSceneWrapper.GetHeightAtPoint(in campaignPos, ref height);
                 points3D.Add(new Vec3(p.x, p.y, height + heightOffset));
-
-                WaterType waterType = ClassifyPoint(p);
-
-                bool hide = false;
-                switch (waterType)
-                {
-                    case WaterType.Sea:
-                        hide = hideSea;
-                        break;
-                    case WaterType.River:
-                        hide = hideRivers;
-                        break;
-                }
-
-                hideFlags.Add(hide);
+                hideFlags.Add(IsWaterPoint(p));
             }
 
             return (points3D, hideFlags);
