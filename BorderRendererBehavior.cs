@@ -59,6 +59,15 @@ namespace KingdomBorders
         private List<JunctionInfo> _junctions;
         private HashSet<long> _junctionKeys;
 
+        // === Cached border structure ===
+        // Persists completed strip geometry per kingdom so partial regeneration
+        // only rebuilds affected kingdoms, leaving the rest untouched.
+        private Dictionary<Kingdom, KingdomMeshBuilder> _cachedBuilders;
+
+        // Kingdoms whose borders need regeneration in the current partial build.
+        // null means full rebuild (all kingdoms processed).
+        private HashSet<Kingdom> _affectedKingdoms;
+
         public BorderRenderer Renderer { get; private set; }
         public Scene MapScene { get; private set; }
 
@@ -91,9 +100,6 @@ namespace KingdomBorders
             if (!_isInitialized)
                 return;
 
-            // Queue a full rebuild — don't run immediately since the destruction cascade
-            // fires OnClanChangedKingdom + OnSettlementOwnerChanged for each clan/fief
-            // before this event arrives. A full rebuild after everything settles is correct.
             ModLog.Log($"Kingdom destroyed: {kingdom.Name} — queuing full rebuild");
             _fullRebuildRequested = true;
         }
@@ -103,8 +109,6 @@ namespace KingdomBorders
             if (!_isInitialized)
                 return;
 
-            // Queue a full rebuild. CreateKingdom also fires OnClanChangedKingdom
-            // so we just coalesce into a single full rebuild.
             ModLog.Log($"Kingdom created: {kingdom.Name} — queuing full rebuild");
             _fullRebuildRequested = true;
         }
@@ -229,6 +233,8 @@ namespace KingdomBorders
                 return;
 
             Renderer.ClearAll();
+            _cachedBuilders = null;
+            _affectedKingdoms = null; // null = full rebuild, process all kingdoms
             _calculator = new BorderCalculator(resolution: 150);
             _calculator.CalculateMapBounds();
             _calculator.BeginBuildTerritoryGrid();
@@ -352,10 +358,25 @@ namespace KingdomBorders
             ModLog.Log($"Clan {clan.Name} changed kingdom ({detail}) with {clan.Settlements.Count(s => s.IsTown || s.IsCastle)} fiefs — queued regen");
         }
 
+        /// <summary>
+        /// Identifies which kingdoms are directly affected by the changed settlements,
+        /// then determines the full set of kingdoms that need regeneration by expanding
+        /// to include any kingdom that shares a border segment with an affected one.
+        /// Only clears and rebuilds those kingdoms; unaffected kingdoms keep their
+        /// cached mesh entities in the scene.
+        /// </summary>
         private void RegenerateForSettlements(HashSet<Settlement> changedSettlements)
         {
             if (Renderer == null || _calculator == null)
                 return;
+
+            // No cache yet means we haven't completed a full build — fall back to full rebuild.
+            if (_cachedBuilders == null)
+            {
+                ModLog.Log("No cached builders — falling back to full rebuild");
+                FullRebuild();
+                return;
+            }
 
             ModLog.Log($"Regenerating borders for {changedSettlements.Count} changed settlements...");
 
@@ -363,16 +384,103 @@ namespace KingdomBorders
             // This also re-detects exclaves on the full grid.
             _calculator.RebuildTerritoryGridAroundSettlements(changedSettlements);
 
-            // Clear ALL border entities and rebuild everything from the updated grid.
-            // We can't selectively clear per-kingdom because each entity contains ALL
-            // strips for that kingdom — clearing a neighbor's entity destroys its borders
-            // with unrelated kingdoms that we wouldn't rebuild.
-            // The grid is already built, so re-entering FindingEdges only redoes
-            // edge detection + incremental segment processing, which is cheap.
-            Renderer.ClearAll();
-            _phase = BuildPhase.FindingEdges;
+            // --- Identify directly affected kingdoms ---
+            // These are the old and new owners' kingdoms for the changed settlements.
+            var directlyAffected = new HashSet<Kingdom>();
+            foreach (var s in changedSettlements)
+            {
+                Kingdom kingdom;
+                if (s.IsVillage)
+                    kingdom = s.Village?.Bound?.OwnerClan?.Kingdom;
+                else
+                    kingdom = s.OwnerClan?.Kingdom;
 
-            ModLog.Log("Cleared all borders — re-entering edge finding from updated grid");
+                if (kingdom != null)
+                    directlyAffected.Add(kingdom);
+            }
+
+            // Also check what kingdoms WERE in the cached builders that owned borders
+            // near these settlements — those are the "old" owners whose borders shrank.
+            // We detect them by finding all edges from the updated grid and checking
+            // which cached kingdoms have segments touching the affected area.
+            // For simplicity and correctness, we do a full edge scan (fast) and expand
+            // the affected set to include all neighbors that share any border segment
+            // with a directly affected kingdom.
+            var edges = _calculator.FindBorderEdges();
+            var exclaveEdges = _calculator.FindExclaveBorderEdges();
+            edges.AddRange(exclaveEdges);
+
+            if (edges.Count == 0)
+            {
+                ModLog.Log("No border edges found after partial grid rebuild");
+                Renderer.ClearAll();
+                _cachedBuilders.Clear();
+                _phase = BuildPhase.Idle;
+                return;
+            }
+
+            var segments = _calculator.ChainEdges(edges);
+
+            // Expand affected set: any kingdom that shares a border segment with
+            // a directly affected kingdom also needs its borders rebuilt, because
+            // the shared border line itself may have shifted.
+            _affectedKingdoms = new HashSet<Kingdom>(directlyAffected);
+            foreach (var seg in segments)
+            {
+                if (seg.KingdomA == null || seg.KingdomB == null)
+                    continue;
+
+                bool aAffected = directlyAffected.Contains(seg.KingdomA);
+                bool bAffected = directlyAffected.Contains(seg.KingdomB);
+
+                if (aAffected && seg.KingdomB != null)
+                    _affectedKingdoms.Add(seg.KingdomB);
+                if (bAffected && seg.KingdomA != null)
+                    _affectedKingdoms.Add(seg.KingdomA);
+            }
+
+            // Also add any kingdoms that existed in the cache but no longer appear
+            // in any segments — their territory may have vanished entirely.
+            var kingdomsInSegments = new HashSet<Kingdom>();
+            foreach (var seg in segments)
+            {
+                if (seg.KingdomA != null) kingdomsInSegments.Add(seg.KingdomA);
+                if (seg.KingdomB != null) kingdomsInSegments.Add(seg.KingdomB);
+            }
+            foreach (var cachedKingdom in new List<Kingdom>(_cachedBuilders.Keys))
+            {
+                if (!kingdomsInSegments.Contains(cachedKingdom) && directlyAffected.Contains(cachedKingdom))
+                {
+                    _affectedKingdoms.Add(cachedKingdom);
+                }
+            }
+
+            ModLog.Log($"Affected kingdoms: {_affectedKingdoms.Count} " +
+                        $"(directly: {directlyAffected.Count}, " +
+                        $"expanded with neighbors: {_affectedKingdoms.Count - directlyAffected.Count})");
+            foreach (var k in _affectedKingdoms)
+                ModLog.Log($"  - {k.Name}");
+
+            // Clear only affected kingdoms' entities from the scene
+            Renderer.ClearForKingdoms(_affectedKingdoms);
+
+            // Remove affected kingdoms from the cache — they'll be rebuilt
+            foreach (var k in _affectedKingdoms)
+                _cachedBuilders.Remove(k);
+
+            // Detect junctions and enter the segment processing phase.
+            // FindEdgesAndChain would re-scan edges, but we already have them.
+            _junctions = _calculator.FindJunctions(segments);
+            _junctionKeys = _calculator.GetJunctionKeys(_junctions);
+
+            ModLog.Log($"Queuing {segments.Count} border segments (filtering to affected kingdoms)...");
+
+            _pendingSegments = segments;
+            _pendingIndex = 0;
+            _renderedCount = 0;
+            _skippedCount = 0;
+            _kingdomBuilders = new Dictionary<Kingdom, KingdomMeshBuilder>();
+            _phase = BuildPhase.ProcessingSegments;
         }
 
         private void BeginBuildBorders()
@@ -409,6 +517,8 @@ namespace KingdomBorders
 
                 SnapshotMCMSettings();
 
+                _cachedBuilders = null;
+                _affectedKingdoms = null;
                 _calculator = new BorderCalculator(resolution: 150);
                 _calculator.CalculateMapBounds();
                 _calculator.BeginBuildTerritoryGrid();
@@ -468,6 +578,37 @@ namespace KingdomBorders
             return builder;
         }
 
+        /// <summary>
+        /// Returns true if the given segment should be processed in the current build.
+        /// During a partial rebuild, only segments touching at least one affected kingdom
+        /// are processed. During a full rebuild (_affectedKingdoms is null), all are processed.
+        /// </summary>
+        private bool ShouldProcessSegment(BorderSegment segment)
+        {
+            if (_affectedKingdoms == null)
+                return true; // Full rebuild — process everything
+
+            // Process if either side of the segment belongs to an affected kingdom
+            bool aAffected = segment.KingdomA != null && _affectedKingdoms.Contains(segment.KingdomA);
+            bool bAffected = segment.KingdomB != null && _affectedKingdoms.Contains(segment.KingdomB);
+
+            return aAffected || bAffected;
+        }
+
+        /// <summary>
+        /// Returns true if the given kingdom should have its strip geometry rebuilt.
+        /// During a full rebuild, all kingdoms are rebuilt. During a partial rebuild,
+        /// only affected kingdoms get new strips — unaffected kingdoms retain their
+        /// existing cached mesh entities in the scene.
+        /// </summary>
+        private bool IsKingdomAffected(Kingdom kingdom)
+        {
+            if (_affectedKingdoms == null)
+                return true; // Full rebuild — all kingdoms are affected
+
+            return _affectedKingdoms.Contains(kingdom);
+        }
+
         private void ProcessPendingSegments()
         {
             int processed = 0;
@@ -497,6 +638,13 @@ namespace KingdomBorders
                     continue;
                 }
 
+                // Skip segments that don't involve any affected kingdom (partial rebuild only)
+                if (!ShouldProcessSegment(segment))
+                {
+                    _skippedCount++;
+                    continue;
+                }
+
                 // === Closed loop (exclave) processing ===
                 if (segment.IsClosedLoop)
                 {
@@ -504,7 +652,7 @@ namespace KingdomBorders
                     continue;
                 }
 
-                // === Open segment processing (unchanged) ===
+                // === Open segment processing ===
                 var smoothed = _calculator.SmoothChaikin(segment.Points, iterations: cornerSmoothing);
 
                 // Determine trim amount per endpoint:
@@ -532,8 +680,19 @@ namespace KingdomBorders
                 var rightLineInner = BorderCalculator.OffsetPolyline(smoothed, -innerOffset);
                 var rightLineOuter = BorderCalculator.OffsetPolyline(smoothed, -outerOffset);
 
-                GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
-                GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
+                // Only add strips for kingdoms that are being rebuilt.
+                // Unaffected kingdoms already have their mesh entities in the scene.
+                if (IsKingdomAffected(leftKingdom))
+                {
+                    GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
+                    _renderedCount++;
+                }
+
+                if (IsKingdomAffected(rightKingdom))
+                {
+                    GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
+                    _renderedCount++;
+                }
 
                 // Compute outward direction at each junction endpoint.
                 // "Outward" = direction the segment travels AWAY from the junction.
@@ -564,8 +723,6 @@ namespace KingdomBorders
                     Vec2 tailDir = (smoothed[lastSmoothed] - smoothed[lastSmoothed - 1]).Normalized();
                     tailArm.OutwardDir = tailDir;
                 }
-
-                _renderedCount += 2;
             }
 
             if (_pendingIndex >= _pendingSegments.Count)
@@ -625,13 +782,13 @@ namespace KingdomBorders
 
             if (exclaveKingdom != null)
             {
-                // Only draw the exclave kingdom's border strip
-                if (leftKingdom == exclaveKingdom)
+                // Only draw the exclave kingdom's border strip, and only if it's affected
+                if (leftKingdom == exclaveKingdom && IsKingdomAffected(leftKingdom))
                 {
                     GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
                     _renderedCount++;
                 }
-                else if (rightKingdom == exclaveKingdom)
+                else if (rightKingdom == exclaveKingdom && IsKingdomAffected(rightKingdom))
                 {
                     GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
                     _renderedCount++;
@@ -640,15 +797,23 @@ namespace KingdomBorders
             else
             {
                 // Fallback: draw both sides (shouldn't normally happen for exclaves)
-                GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
-                GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
-                _renderedCount += 2;
+                if (IsKingdomAffected(leftKingdom))
+                {
+                    GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
+                    _renderedCount++;
+                }
+                if (IsKingdomAffected(rightKingdom))
+                {
+                    GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
+                    _renderedCount++;
+                }
             }
         }
 
         /// <summary>
         /// For each junction, finds pairs of arms that share a kingdom and generates
         /// a smooth bevel/miter join connecting their strip endpoints.
+        /// During partial rebuilds, only junctions involving affected kingdoms are processed.
         /// </summary>
         private void GenerateJunctionJoins(float innerOffset, float outerOffset, int cornerSmoothing)
         {
@@ -663,6 +828,23 @@ namespace KingdomBorders
                 if (junction.Arms.Count < 2)
                     continue;
 
+                // During partial rebuild, skip junctions that don't touch any affected kingdom
+                if (_affectedKingdoms != null)
+                {
+                    bool junctionAffected = false;
+                    foreach (var arm in junction.Arms)
+                    {
+                        if ((arm.LeftKingdom != null && _affectedKingdoms.Contains(arm.LeftKingdom)) ||
+                            (arm.RightKingdom != null && _affectedKingdoms.Contains(arm.RightKingdom)))
+                        {
+                            junctionAffected = true;
+                            break;
+                        }
+                    }
+                    if (!junctionAffected)
+                        continue;
+                }
+
                 // Collect all kingdoms present at this junction
                 var kingdomsAtJunction = new HashSet<Kingdom>();
                 foreach (var arm in junction.Arms)
@@ -674,6 +856,10 @@ namespace KingdomBorders
                 foreach (var kingdom in kingdomsAtJunction)
                 {
                     if (kingdom == null)
+                        continue;
+
+                    // During partial rebuild, only generate joins for affected kingdoms
+                    if (!IsKingdomAffected(kingdom))
                         continue;
 
                     // Collect strip endpoints and outward directions for this kingdom
@@ -767,10 +953,29 @@ namespace KingdomBorders
 
             if (_flushIndex >= _pendingFlush.Count)
             {
+                // Update the cache with the newly built kingdoms
+                if (_cachedBuilders == null)
+                    _cachedBuilders = new Dictionary<Kingdom, KingdomMeshBuilder>();
+
+                foreach (var builder in _pendingFlush)
+                {
+                    _cachedBuilders[builder.Kingdom] = builder;
+                }
+
                 ModLog.Log($"Total entities: {Renderer.EntityCount}");
-                ModLog.Log("=== Kingdom Border Renderer Done ===");
+
+                if (_affectedKingdoms != null)
+                {
+                    ModLog.Log($"=== Partial Rebuild Done ({_affectedKingdoms.Count} kingdoms regenerated, " +
+                               $"{_cachedBuilders.Count} total cached) ===");
+                }
+                else
+                {
+                    ModLog.Log("=== Kingdom Border Renderer Done ===");
+                }
 
                 _pendingFlush = null;
+                _affectedKingdoms = null;
                 _phase = BuildPhase.Idle;
             }
         }
@@ -783,6 +988,8 @@ namespace KingdomBorders
                 Renderer.ClearAll();
                 Renderer = null;
             }
+            _cachedBuilders = null;
+            _affectedKingdoms = null;
             _isInitialized = false;
             _phase = BuildPhase.Idle;
         }
