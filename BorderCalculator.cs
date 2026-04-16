@@ -20,6 +20,19 @@ namespace KingdomBorders
         public List<Vec2> Points = new List<Vec2>();
         public Kingdom KingdomA;
         public Kingdom KingdomB;
+
+        /// <summary>
+        /// True if this segment forms a closed loop (exclave border).
+        /// Closed loops get special smoothing and no endpoint trimming.
+        /// </summary>
+        public bool IsClosedLoop;
+
+        /// <summary>
+        /// For exclave segments, the kingdom that owns the exclave territory.
+        /// Only this kingdom's border strip is drawn; the surrounding kingdom's
+        /// strip is suppressed to avoid overlap with the main border.
+        /// </summary>
+        public Kingdom ExclaveKingdom;
     }
 
     /// <summary>
@@ -64,6 +77,17 @@ namespace KingdomBorders
         public Kingdom Kingdom;
     }
 
+    /// <summary>
+    /// Represents a disconnected territory blob (exclave) that has been separated
+    /// from the main grid so its borders can be drawn as a clean closed loop.
+    /// </summary>
+    internal class ExclaveBlob
+    {
+        public Kingdom OriginalKingdom;
+        public Kingdom SurroundingKingdom;
+        public List<(int x, int y)> Cells;
+    }
+
     public class BorderCalculator
     {
         private readonly int _gridResolution;
@@ -83,6 +107,9 @@ namespace KingdomBorders
         // Incremental grid building state
         private int _gridBuildRow;
         private bool _gridBuildComplete;
+
+        // Exclave data: stored after DetectAndSeparateExclaves, used to generate extra border segments
+        private List<ExclaveBlob> _exclaveBlobs;
 
         public BorderCalculator(int resolution = 150)
         {
@@ -236,6 +263,7 @@ namespace KingdomBorders
         public void BeginBuildTerritoryGrid()
         {
             _territoryGrid = new Kingdom[_gridResolution, _gridResolution];
+            _exclaveBlobs = null;
             BuildSettlementCache();
             _gridBuildRow = 0;
             _gridBuildComplete = false;
@@ -273,6 +301,10 @@ namespace KingdomBorders
                 _gridBuildComplete = true;
                 _spatialBuckets = null; // Free memory
                 ModLog.Log("Territory grid build complete");
+
+                // Detect and fix exclaves immediately after grid is complete
+                DetectAndSeparateExclaves();
+
                 return true;
             }
 
@@ -287,6 +319,10 @@ namespace KingdomBorders
         {
             if (_territoryGrid == null)
                 return false;
+
+            // Restore exclave-overwritten cells so the fresh DetectAndSeparateExclaves
+            // pass at the end can re-discover all exclaves from clean grid data.
+            RestoreExclaveCells();
 
             // Rebuild cache to pick up new ownership
             BuildSettlementCache();
@@ -315,6 +351,10 @@ namespace KingdomBorders
             }
 
             _spatialBuckets = null; // Free memory
+
+            // Re-detect exclaves after grid rebuild
+            DetectAndSeparateExclaves();
+
             return anyChanged;
         }
 
@@ -327,6 +367,10 @@ namespace KingdomBorders
         {
             if (_territoryGrid == null || changedSettlements == null || changedSettlements.Count == 0)
                 return false;
+
+            // Restore exclave-overwritten cells so the fresh DetectAndSeparateExclaves
+            // pass at the end can re-discover all exclaves from clean grid data.
+            RestoreExclaveCells();
 
             // Rebuild the settlement cache to pick up new ownership
             BuildSettlementCache();
@@ -421,7 +465,387 @@ namespace KingdomBorders
             int totalCells = _gridResolution * _gridResolution;
             ModLog.Log($"Partial grid rebuild: {cellsUpdated}/{totalCells} cells ({100f * cellsUpdated / totalCells:F1}%)");
 
+            // Re-detect exclaves after partial rebuild
+            DetectAndSeparateExclaves();
+
             return anyChanged;
+        }
+
+        // ===== Exclave Detection & Separation =====
+
+        /// <summary>
+        /// Detects disconnected territory blobs (exclaves) for each kingdom.
+        /// The largest blob is kept as the mainland. Smaller blobs are replaced
+        /// in the grid with the surrounding kingdom, and their original boundaries
+        /// are stored so they can be drawn as separate closed-loop borders.
+        /// This prevents the border-flipping bug where a thin Voronoi corridor
+        /// causes left/right kingdom assignment to invert along the entire border.
+        /// </summary>
+        private void DetectAndSeparateExclaves()
+        {
+            _exclaveBlobs = new List<ExclaveBlob>();
+
+            // visited[x,y] tracks whether each cell has been flood-filled already
+            bool[,] visited = new bool[_gridResolution, _gridResolution];
+
+            // Collect all blobs via flood fill
+            var allBlobs = new List<(Kingdom kingdom, List<(int x, int y)> cells)>();
+
+            for (int x = 0; x < _gridResolution; x++)
+            {
+                for (int y = 0; y < _gridResolution; y++)
+                {
+                    if (visited[x, y])
+                        continue;
+
+                    Kingdom kingdom = _territoryGrid[x, y];
+                    if (kingdom == null)
+                    {
+                        visited[x, y] = true;
+                        continue;
+                    }
+
+                    // Flood fill this blob
+                    var blob = FloodFill(x, y, kingdom, visited);
+                    allBlobs.Add((kingdom, blob));
+                }
+            }
+
+            // Group blobs by kingdom and find exclaves (non-largest blobs)
+            var blobsByKingdom = new Dictionary<Kingdom, List<List<(int x, int y)>>>();
+            foreach (var (kingdom, cells) in allBlobs)
+            {
+                if (!blobsByKingdom.ContainsKey(kingdom))
+                    blobsByKingdom[kingdom] = new List<List<(int x, int y)>>();
+                blobsByKingdom[kingdom].Add(cells);
+            }
+
+            int totalExclaves = 0;
+            int totalCellsReplaced = 0;
+
+            foreach (var kvp in blobsByKingdom)
+            {
+                Kingdom kingdom = kvp.Key;
+                var blobs = kvp.Value;
+
+                if (blobs.Count <= 1)
+                    continue; // Only one blob — no exclaves
+
+                // Find the largest blob (mainland)
+                int largestIndex = 0;
+                int largestSize = blobs[0].Count;
+                for (int i = 1; i < blobs.Count; i++)
+                {
+                    if (blobs[i].Count > largestSize)
+                    {
+                        largestSize = blobs[i].Count;
+                        largestIndex = i;
+                    }
+                }
+
+                // Process each exclave (non-largest blob)
+                for (int i = 0; i < blobs.Count; i++)
+                {
+                    if (i == largestIndex)
+                        continue;
+
+                    var exclaveCells = blobs[i];
+
+                    // Find the surrounding kingdom: the most common non-null, non-self
+                    // kingdom in the cells adjacent to this blob's boundary
+                    Kingdom surroundingKingdom = FindSurroundingKingdom(exclaveCells, kingdom);
+
+                    if (surroundingKingdom == null)
+                        continue; // Edge case: blob at map edge surrounded by null
+
+                    _exclaveBlobs.Add(new ExclaveBlob
+                    {
+                        OriginalKingdom = kingdom,
+                        SurroundingKingdom = surroundingKingdom,
+                        Cells = exclaveCells
+                    });
+
+                    // Replace exclave cells in the grid with the surrounding kingdom.
+                    // This eliminates the corridor so the main border stays clean.
+                    foreach (var (cx, cy) in exclaveCells)
+                    {
+                        _territoryGrid[cx, cy] = surroundingKingdom;
+                    }
+
+                    totalExclaves++;
+                    totalCellsReplaced += exclaveCells.Count;
+                }
+            }
+
+            if (totalExclaves > 0)
+            {
+                ModLog.Log($"Exclave fix: found {totalExclaves} exclaves, replaced {totalCellsReplaced} grid cells");
+            }
+        }
+
+        /// <summary>
+        /// Flood fills from a starting cell, collecting all connected cells belonging
+        /// to the same kingdom. Uses a stack-based iterative approach (no recursion)
+        /// to avoid stack overflows on large blobs.
+        /// </summary>
+        private List<(int x, int y)> FloodFill(int startX, int startY, Kingdom kingdom, bool[,] visited)
+        {
+            var cells = new List<(int x, int y)>();
+            var stack = new Stack<(int x, int y)>();
+            stack.Push((startX, startY));
+            visited[startX, startY] = true;
+
+            while (stack.Count > 0)
+            {
+                var (cx, cy) = stack.Pop();
+                cells.Add((cx, cy));
+
+                // Check 4 neighbors (4-connectivity for grid cells)
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = cx + _dx4[d];
+                    int ny = cy + _dy4[d];
+
+                    if (nx < 0 || nx >= _gridResolution || ny < 0 || ny >= _gridResolution)
+                        continue;
+                    if (visited[nx, ny])
+                        continue;
+                    if (_territoryGrid[nx, ny] != kingdom)
+                        continue;
+
+                    visited[nx, ny] = true;
+                    stack.Push((nx, ny));
+                }
+            }
+
+            return cells;
+        }
+
+        // 4-directional neighbor offsets
+        private static readonly int[] _dx4 = { 1, -1, 0, 0 };
+        private static readonly int[] _dy4 = { 0, 0, 1, -1 };
+
+        /// <summary>
+        /// Finds the most common neighboring kingdom around an exclave blob,
+        /// excluding null and the exclave's own kingdom.
+        /// </summary>
+        private Kingdom FindSurroundingKingdom(List<(int x, int y)> cells, Kingdom selfKingdom)
+        {
+            // Use a HashSet for fast membership checks on the blob
+            var cellSet = new HashSet<long>(cells.Count);
+            foreach (var (x, y) in cells)
+            {
+                cellSet.Add((long)x << 32 | (uint)y);
+            }
+
+            var neighborCounts = new Dictionary<Kingdom, int>();
+
+            foreach (var (cx, cy) in cells)
+            {
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = cx + _dx4[d];
+                    int ny = cy + _dy4[d];
+
+                    if (nx < 0 || nx >= _gridResolution || ny < 0 || ny >= _gridResolution)
+                        continue;
+
+                    // Skip cells that are part of this blob
+                    if (cellSet.Contains((long)nx << 32 | (uint)ny))
+                        continue;
+
+                    Kingdom neighbor = _territoryGrid[nx, ny];
+                    if (neighbor == null || neighbor == selfKingdom)
+                        continue;
+
+                    if (!neighborCounts.ContainsKey(neighbor))
+                        neighborCounts[neighbor] = 0;
+                    neighborCounts[neighbor]++;
+                }
+            }
+
+            // Return the kingdom with the most adjacent cells
+            Kingdom best = null;
+            int bestCount = 0;
+            foreach (var kvp in neighborCounts)
+            {
+                if (kvp.Value > bestCount)
+                {
+                    bestCount = kvp.Value;
+                    best = kvp.Key;
+                }
+            }
+
+            return best;
+        }
+
+        /// <summary>
+        /// Generates border edges for all exclaves. These edges represent the boundary
+        /// between the exclave's original kingdom and the surrounding kingdom, traced
+        /// from the stored blob cells against the (now-modified) grid.
+        /// </summary>
+        public List<BorderEdge> FindExclaveBorderEdges()
+        {
+            if (_exclaveBlobs == null || _exclaveBlobs.Count == 0)
+                return new List<BorderEdge>();
+
+            var edges = new List<BorderEdge>();
+
+            foreach (var blob in _exclaveBlobs)
+            {
+                // Build a set for fast lookup of blob cells
+                var cellSet = new HashSet<long>(blob.Cells.Count);
+                foreach (var (x, y) in blob.Cells)
+                {
+                    cellSet.Add((long)x << 32 | (uint)y);
+                }
+
+                // For each cell in the blob, check its 4 neighbors.
+                // If a neighbor is NOT in the blob, there's a border edge between them.
+                foreach (var (cx, cy) in blob.Cells)
+                {
+                    // Check right neighbor
+                    if (cx + 1 < _gridResolution && !cellSet.Contains((long)(cx + 1) << 32 | (uint)cy))
+                    {
+                        edges.Add(new BorderEdge
+                        {
+                            Start = GridToWorld(cx + 1, cy),
+                            End = GridToWorld(cx + 1, cy + 1),
+                            KingdomA = blob.OriginalKingdom,
+                            KingdomB = blob.SurroundingKingdom
+                        });
+                    }
+
+                    // Check left neighbor
+                    if (cx - 1 >= 0 && !cellSet.Contains((long)(cx - 1) << 32 | (uint)cy))
+                    {
+                        edges.Add(new BorderEdge
+                        {
+                            Start = GridToWorld(cx, cy),
+                            End = GridToWorld(cx, cy + 1),
+                            KingdomA = blob.SurroundingKingdom,
+                            KingdomB = blob.OriginalKingdom
+                        });
+                    }
+
+                    // Check top neighbor
+                    if (cy + 1 < _gridResolution && !cellSet.Contains((long)cx << 32 | (uint)(cy + 1)))
+                    {
+                        edges.Add(new BorderEdge
+                        {
+                            Start = GridToWorld(cx, cy + 1),
+                            End = GridToWorld(cx + 1, cy + 1),
+                            KingdomA = blob.OriginalKingdom,
+                            KingdomB = blob.SurroundingKingdom
+                        });
+                    }
+
+                    // Check bottom neighbor
+                    if (cy - 1 >= 0 && !cellSet.Contains((long)cx << 32 | (uint)(cy - 1)))
+                    {
+                        edges.Add(new BorderEdge
+                        {
+                            Start = GridToWorld(cx, cy),
+                            End = GridToWorld(cx + 1, cy),
+                            KingdomA = blob.SurroundingKingdom,
+                            KingdomB = blob.OriginalKingdom
+                        });
+                    }
+
+                    // Also check map edges — if the blob cell is at the grid boundary,
+                    // it has an implicit border
+                    if (cx == 0)
+                    {
+                        edges.Add(new BorderEdge
+                        {
+                            Start = GridToWorld(cx, cy),
+                            End = GridToWorld(cx, cy + 1),
+                            KingdomA = blob.SurroundingKingdom,
+                            KingdomB = blob.OriginalKingdom
+                        });
+                    }
+                    if (cx == _gridResolution - 1)
+                    {
+                        edges.Add(new BorderEdge
+                        {
+                            Start = GridToWorld(cx + 1, cy),
+                            End = GridToWorld(cx + 1, cy + 1),
+                            KingdomA = blob.OriginalKingdom,
+                            KingdomB = blob.SurroundingKingdom
+                        });
+                    }
+                    if (cy == 0)
+                    {
+                        edges.Add(new BorderEdge
+                        {
+                            Start = GridToWorld(cx, cy),
+                            End = GridToWorld(cx + 1, cy),
+                            KingdomA = blob.SurroundingKingdom,
+                            KingdomB = blob.OriginalKingdom
+                        });
+                    }
+                    if (cy == _gridResolution - 1)
+                    {
+                        edges.Add(new BorderEdge
+                        {
+                            Start = GridToWorld(cx, cy + 1),
+                            End = GridToWorld(cx + 1, cy + 1),
+                            KingdomA = blob.OriginalKingdom,
+                            KingdomB = blob.SurroundingKingdom
+                        });
+                    }
+                }
+            }
+
+            if (edges.Count > 0)
+                ModLog.Log($"Exclave border edges: {edges.Count}");
+
+            return edges;
+        }
+
+        /// <summary>
+        /// Generates exclave border edges only for the specified kingdoms.
+        /// </summary>
+        public List<BorderEdge> FindExclaveBorderEdgesForKingdoms(HashSet<Kingdom> kingdoms)
+        {
+            if (_exclaveBlobs == null || _exclaveBlobs.Count == 0)
+                return new List<BorderEdge>();
+
+            // Filter to blobs that involve any of the affected kingdoms
+            var relevantBlobs = new List<ExclaveBlob>();
+            foreach (var blob in _exclaveBlobs)
+            {
+                if (kingdoms.Contains(blob.OriginalKingdom) || kingdoms.Contains(blob.SurroundingKingdom))
+                    relevantBlobs.Add(blob);
+            }
+
+            if (relevantBlobs.Count == 0)
+                return new List<BorderEdge>();
+
+            // Temporarily store and swap blobs so we can reuse FindExclaveBorderEdges logic
+            var saved = _exclaveBlobs;
+            _exclaveBlobs = relevantBlobs;
+            var edges = FindExclaveBorderEdges();
+            _exclaveBlobs = saved;
+
+            return edges;
+        }
+
+        /// <summary>
+        /// Returns the set of exclave kingdom owners, so the behavior layer
+        /// knows which kingdoms are involved in exclave segments.
+        /// </summary>
+        public HashSet<Kingdom> GetExclaveKingdoms()
+        {
+            var kingdoms = new HashSet<Kingdom>();
+            if (_exclaveBlobs != null)
+            {
+                foreach (var blob in _exclaveBlobs)
+                {
+                    kingdoms.Add(blob.OriginalKingdom);
+                }
+            }
+            return kingdoms;
         }
 
         public List<BorderEdge> FindBorderEdges()
@@ -512,6 +936,8 @@ namespace KingdomBorders
 
         /// <summary>
         /// Chains edges into segments using spatial hashing for fast endpoint lookup.
+        /// After chaining, detects closed loops where head ≈ tail and marks them.
+        /// Also tags exclave segments with their owning kingdom.
         /// </summary>
         public List<BorderSegment> ChainEdges(List<BorderEdge> edges)
         {
@@ -552,10 +978,38 @@ namespace KingdomBorders
                 ExtendChain(segment, false, pointToEdges, used);
                 ExtendChain(segment, true, pointToEdges, used);
 
+                // Detect closed loops: head and tail are the same point
+                if (segment.Points.Count >= 4 &&
+                    ApproxEqual(segment.Points[0], segment.Points[segment.Points.Count - 1]))
+                {
+                    // Remove the duplicate closing point — smoothing will handle the wrap
+                    segment.Points.RemoveAt(segment.Points.Count - 1);
+                    segment.IsClosedLoop = true;
+                }
+
                 segments.Add(segment);
             }
 
-            ModLog.Log($"Chained into {segments.Count} segments");
+            // Tag exclave segments with the exclave kingdom
+            if (_exclaveBlobs != null && _exclaveBlobs.Count > 0)
+            {
+                foreach (var seg in segments)
+                {
+                    foreach (var blob in _exclaveBlobs)
+                    {
+                        bool matchA = (seg.KingdomA == blob.OriginalKingdom && seg.KingdomB == blob.SurroundingKingdom);
+                        bool matchB = (seg.KingdomA == blob.SurroundingKingdom && seg.KingdomB == blob.OriginalKingdom);
+
+                        if ((matchA || matchB) && seg.IsClosedLoop)
+                        {
+                            seg.ExclaveKingdom = blob.OriginalKingdom;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            ModLog.Log($"Chained into {segments.Count} segments ({segments.Count(s => s.IsClosedLoop)} closed loops)");
             return segments;
         }
 
@@ -612,6 +1066,7 @@ namespace KingdomBorders
 
         /// <summary>
         /// Chaikin's corner-cutting algorithm for smoothing polylines.
+        /// Open polylines pin their first and last points.
         /// </summary>
         public List<Vec2> SmoothChaikin(List<Vec2> points, int iterations = 2)
         {
@@ -636,6 +1091,36 @@ namespace KingdomBorders
                 }
 
                 smoothed.Add(result[result.Count - 1]);
+
+                result = smoothed;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Chaikin's corner-cutting for closed loops. All corners are smoothed uniformly
+        /// with no pinned endpoints, producing a continuous smooth ring.
+        /// </summary>
+        public List<Vec2> SmoothChaikinClosed(List<Vec2> points, int iterations = 2)
+        {
+            if (points.Count < 3)
+                return new List<Vec2>(points);
+
+            var result = new List<Vec2>(points);
+
+            for (int iter = 0; iter < iterations; iter++)
+            {
+                var smoothed = new List<Vec2>(result.Count * 2);
+
+                for (int i = 0; i < result.Count; i++)
+                {
+                    Vec2 p0 = result[i];
+                    Vec2 p1 = result[(i + 1) % result.Count];
+
+                    smoothed.Add(p0 * 0.75f + p1 * 0.25f);
+                    smoothed.Add(p0 * 0.25f + p1 * 0.75f);
+                }
 
                 result = smoothed;
             }
@@ -722,6 +1207,35 @@ namespace KingdomBorders
                 }
 
                 result.Add(points[i] + perpendicular * offset);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Offsets a closed-loop polyline. Wraps around at both ends so the first
+        /// and last vertices get properly averaged perpendiculars.
+        /// </summary>
+        public static List<Vec2> OffsetPolylineClosed(List<Vec2> points, float offset)
+        {
+            if (points.Count < 3)
+                return OffsetPolyline(points, offset);
+
+            var result = new List<Vec2>(points.Count);
+            int count = points.Count;
+
+            for (int i = 0; i < count; i++)
+            {
+                Vec2 prev = points[(i - 1 + count) % count];
+                Vec2 curr = points[i];
+                Vec2 next = points[(i + 1) % count];
+
+                Vec2 dir1 = (curr - prev).Normalized();
+                Vec2 dir2 = (next - curr).Normalized();
+                Vec2 avgDir = (dir1 + dir2).Normalized();
+                Vec2 perpendicular = new Vec2(-avgDir.y, avgDir.x);
+
+                result.Add(curr + perpendicular * offset);
             }
 
             return result;
@@ -855,6 +1369,10 @@ namespace KingdomBorders
             foreach (var seg in segments)
             {
                 if (seg.Points.Count < 2)
+                    continue;
+
+                // Closed loops have no endpoints — skip them for junction detection
+                if (seg.IsClosedLoop)
                     continue;
 
                 Vec2 head = seg.Points[0];
@@ -1151,14 +1669,23 @@ namespace KingdomBorders
         }
 
         /// <summary>
-        /// Returns a set of hash keys for all junction positions, for fast lookup.
+        /// Returns a set of hash keys for all junction positions, using the raw
+        /// segment endpoint positions (not the averaged junction center). This ensures
+        /// FindArmAtJunction can match segment endpoints that might hash differently
+        /// from the averaged position due to hash cell boundaries.
         /// </summary>
         public HashSet<long> GetJunctionKeys(List<JunctionInfo> junctions)
         {
             var keys = new HashSet<long>();
             foreach (var j in junctions)
             {
-                keys.Add(HashPoint(j.Position));
+                foreach (var arm in j.Arms)
+                {
+                    Vec2 pt = arm.IsHead
+                        ? arm.Segment.Points[0]
+                        : arm.Segment.Points[arm.Segment.Points.Count - 1];
+                    keys.Add(HashPoint(pt));
+                }
             }
             return keys;
         }
@@ -1179,6 +1706,30 @@ namespace KingdomBorders
         {
             return (edge.KingdomA == segment.KingdomA && edge.KingdomB == segment.KingdomB) ||
                     (edge.KingdomA == segment.KingdomB && edge.KingdomB == segment.KingdomA);
+        }
+
+        /// <summary>
+        /// Restores all previously-detected exclave cells back to their original kingdom
+        /// in the territory grid. This must be called before any grid rebuild so that
+        /// DetectAndSeparateExclaves can re-discover exclaves from clean data.
+        /// </summary>
+        private void RestoreExclaveCells()
+        {
+            if (_exclaveBlobs == null || _exclaveBlobs.Count == 0)
+                return;
+
+            int restored = 0;
+            foreach (var blob in _exclaveBlobs)
+            {
+                foreach (var (cx, cy) in blob.Cells)
+                {
+                    _territoryGrid[cx, cy] = blob.OriginalKingdom;
+                }
+                restored += blob.Cells.Count;
+            }
+
+            if (restored > 0)
+                ModLog.Log($"Restored {restored} exclave cells before rebuild");
         }
     }
 }
