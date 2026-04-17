@@ -16,7 +16,8 @@ namespace KingdomBorders
         BuildingGrid,
         FindingEdges,
         ProcessingSegments,
-        FlushingMeshes
+        FlushingMeshes,
+        BuildingFill
     }
 
     public class BorderRendererBehavior : CampaignBehaviorBase
@@ -43,16 +44,21 @@ namespace KingdomBorders
         private int _flushIndex;
         private const int MaxFlushStripsPerTick = 30;
 
+        // Incremental fill build state
+        private List<Kingdom> _pendingFillOrder;
+        private Dictionary<Kingdom, List<(int gx, int gy)>> _pendingFillCells;
+        private int _fillIndex;
+        private const int FillKingdomsPerTick = 1;
+
         // Queued regeneration — accumulated while builds may be in progress
         private HashSet<Settlement> _pendingRegenSettlements;
-
-        // Explicitly tracked kingdoms that must be rebuilt (captured directly from events,
-        // since after the event fires the settlement/clan references no longer point at the
-        // old kingdom and we'd otherwise lose that side of the border).
         private HashSet<Kingdom> _pendingRegenKingdoms;
 
         private bool _regenRequested;
         private bool _fullRebuildRequested;
+
+        // Fill-only rebuild request (e.g. triggered by MCM ShowTerritoryFill toggle).
+        private bool _fillRebuildRequested;
 
         // Track MCM settings to detect changes and trigger rebuild
         private bool _lastShowOnWater;
@@ -60,26 +66,21 @@ namespace KingdomBorders
         private float _lastBorderGap;
         private float _lastHeightOffset;
         private int _lastCornerSmoothing;
+        private bool _lastShowTerritoryFill;
 
         // Junction data for the current build
         private List<JunctionInfo> _junctions;
         private HashSet<long> _junctionKeys;
 
-        // === Cached border structure ===
         // Persists completed strip geometry per kingdom so partial regeneration
         // only rebuilds affected kingdoms, leaving the rest untouched.
         private Dictionary<Kingdom, KingdomMeshBuilder> _cachedBuilders;
 
-        // Kingdoms whose borders need regeneration in the current partial build.
-        // null means full rebuild (all kingdoms processed).
         private HashSet<Kingdom> _affectedKingdoms;
-
-        // Identity keys of strip entities that survived the AABB cull and are still
-        // in the scene. The flush phase passes this to the renderer so new strips
-        // matching one of these keys are not re-created (the existing entity stays).
         private HashSet<long> _preservedStripKeys;
 
         public BorderRenderer Renderer { get; private set; }
+        public TerritoryFillRenderer FillRenderer { get; private set; }
         public Scene MapScene { get; private set; }
 
         public override void RegisterEvents()
@@ -88,14 +89,6 @@ namespace KingdomBorders
             CampaignEvents.OnNewGameCreatedEvent.AddNonSerializedListener(this, OnNewGameCreated);
             CampaignEvents.OnSettlementOwnerChangedEvent.AddNonSerializedListener(this, OnSettlementOwnerChanged);
             CampaignEvents.OnClanChangedKingdomEvent.AddNonSerializedListener(this, OnClanChangedKingdom);
-
-            // KingdomCreatedEvent / KingdomDestroyedEvent are intentionally NOT subscribed:
-            //  - KingdomDestroyed fires AFTER every fief has already been transferred via
-            //    ChangeOwnerOfSettlementAction, so OnSettlementOwnerChanged has already
-            //    handled all border changes by the time this would fire.
-            //  - KingdomCreated is handled via OnClanChangedKingdom(detail=CreateKingdom),
-            //    which gives us the founder clan + both old/new kingdoms for a surgical
-            //    partial rebuild instead of a full-map rebuild.
         }
 
         public override void SyncData(IDataStore dataStore)
@@ -112,11 +105,6 @@ namespace KingdomBorders
             BeginBuildBorders();
         }
 
-        /// <summary>
-        /// Called every application frame from SubModule.OnApplicationTick.
-        /// Drives the build pipeline regardless of campaign tick state,
-        /// so borders generate even while the game is paused on load.
-        /// </summary>
         public void ApplicationTick()
         {
             switch (_phase)
@@ -140,23 +128,23 @@ namespace KingdomBorders
                     FlushKingdomMeshesIncremental();
                     break;
 
+                case BuildPhase.BuildingFill:
+                    ProcessFillBuildIncremental();
+                    break;
+
                 case BuildPhase.Idle:
                     ProcessQueuedRegeneration();
                     break;
             }
         }
 
-        /// <summary>
-        /// Processes any queued regeneration requests once the build pipeline is idle.
-        /// Full rebuilds take priority over partial ones. Multiple events that arrive
-        /// during an active build are coalesced and handled in a single pass here.
-        /// </summary>
         private void ProcessQueuedRegeneration()
         {
             if (_fullRebuildRequested)
             {
                 _fullRebuildRequested = false;
                 _regenRequested = false;
+                _fillRebuildRequested = false;
                 _pendingRegenSettlements = null;
                 _pendingRegenKingdoms = null;
 
@@ -183,15 +171,19 @@ namespace KingdomBorders
                 return;
             }
 
+            if (_fillRebuildRequested)
+            {
+                _fillRebuildRequested = false;
+                BeginFillOnlyRebuild();
+                return;
+            }
+
             if (_isInitialized)
             {
                 CheckMCMSettingsChanged();
             }
         }
 
-        /// <summary>
-        /// Detects MCM setting changes that require a full border rebuild.
-        /// </summary>
         private void CheckMCMSettingsChanged()
         {
             var settings = MCMSettings.Instance;
@@ -203,16 +195,36 @@ namespace KingdomBorders
             float borderGap = settings.BorderGap;
             float heightOffset = settings.HeightOffset;
             int cornerSmoothing = settings.CornerSmoothing;
+            bool showFill = settings.ShowTerritoryFill;
 
-            if (showOnWater != _lastShowOnWater ||
+            bool borderRebuildNeeded =
+                showOnWater != _lastShowOnWater ||
                 Math.Abs(borderWidth - _lastBorderWidth) > 0.001f ||
                 Math.Abs(borderGap - _lastBorderGap) > 0.001f ||
                 Math.Abs(heightOffset - _lastHeightOffset) > 0.001f ||
-                cornerSmoothing != _lastCornerSmoothing)
+                cornerSmoothing != _lastCornerSmoothing;
+
+            if (borderRebuildNeeded)
             {
-                ModLog.Log($"MCM settings changed — triggering full rebuild");
+                ModLog.Log("MCM settings changed — triggering full rebuild");
                 SnapshotMCMSettings();
                 FullRebuild();
+                return;
+            }
+
+            if (showFill != _lastShowTerritoryFill)
+            {
+                _lastShowTerritoryFill = showFill;
+                if (showFill)
+                {
+                    ModLog.Log("MCM: ShowTerritoryFill enabled — building fills");
+                    _fillRebuildRequested = true;
+                }
+                else
+                {
+                    ModLog.Log("MCM: ShowTerritoryFill disabled — clearing fills");
+                    FillRenderer?.ClearAll();
+                }
             }
         }
 
@@ -227,19 +239,18 @@ namespace KingdomBorders
             _lastBorderGap = settings.BorderGap;
             _lastHeightOffset = settings.HeightOffset;
             _lastCornerSmoothing = settings.CornerSmoothing;
+            _lastShowTerritoryFill = settings.ShowTerritoryFill;
         }
 
-        /// <summary>
-        /// Clears all existing borders and starts a full rebuild from scratch.
-        /// </summary>
         private void FullRebuild()
         {
             if (Renderer == null)
                 return;
 
             Renderer.ClearAll();
+            FillRenderer?.ClearAll();
             _cachedBuilders = null;
-            _affectedKingdoms = null; // null = full rebuild, process all kingdoms
+            _affectedKingdoms = null;
             _preservedStripKeys = null;
             _calculator = new BorderCalculator(resolution: 150);
             _calculator.CalculateMapBounds();
@@ -247,12 +258,6 @@ namespace KingdomBorders
             _phase = BuildPhase.BuildingGrid;
         }
 
-        /// <summary>
-        /// Adds a kingdom to the pending regen set if non-null. Called from event handlers
-        /// to explicitly capture both the old and new kingdom sides of a border change,
-        /// since after the event fires the settlement/clan references no longer point
-        /// at the old kingdom.
-        /// </summary>
         private void QueueAffectedKingdom(Kingdom kingdom)
         {
             if (kingdom == null)
@@ -265,37 +270,24 @@ namespace KingdomBorders
         }
 
         private void OnSettlementOwnerChanged(Settlement settlement, bool openToClaim,
-    Hero newOwner, Hero oldOwner, Hero capturerHero,
-    ChangeOwnerOfSettlementAction.ChangeOwnerOfSettlementDetail detail)
+            Hero newOwner, Hero oldOwner, Hero capturerHero,
+            ChangeOwnerOfSettlementAction.ChangeOwnerOfSettlementDetail detail)
         {
             if (!_isInitialized)
                 return;
 
-            // Verified against BLSource ChangeKingdomAction.ApplyInternal:
-            // ByLeaveFaction only fires during LeaveKingdom, transferring the fief from the
-            // leaving clan to the ruler clan of the SAME kingdom. Territory doesn't change,
-            // so any regen is pure waste.
             if (detail == ChangeOwnerOfSettlementAction.ChangeOwnerOfSettlementDetail.ByLeaveFaction)
                 return;
 
             var oldKingdom = oldOwner?.Clan?.Kingdom;
             var newKingdom = newOwner?.Clan?.Kingdom;
 
-            // Skip if neither side belongs to a kingdom — no visible borders affected
             if (oldKingdom == null && newKingdom == null)
                 return;
 
-            // Skip same-kingdom transfers (ByKingDecision after siege, gifts within a realm,
-            // same-kingdom barters, etc.). The fief stays inside the same kingdom's territory
-            // so no border line moves.
             if (oldKingdom != null && newKingdom != null && oldKingdom == newKingdom)
                 return;
 
-            // Skip villages — their bound town/castle changing hands already covers them,
-            // and we add bound villages explicitly below when tracking a town/castle.
-            // Verified against BLSource: ChangeOwnerOfSettlementAction.ApplyInternal fires
-            // a single OnSettlementOwnerChanged for the target settlement only — bound
-            // villages get SetVisualAsDirty() but no event, so we must re-add them here.
             if (settlement.IsVillage)
                 return;
 
@@ -313,9 +305,6 @@ namespace KingdomBorders
                 }
             }
 
-            // Capture BOTH sides explicitly. The old kingdom may have lost its only
-            // adjacency with the new kingdom, so segment-neighbor expansion in
-            // RegenerateForSettlements might not rediscover it.
             QueueAffectedKingdom(oldKingdom);
             QueueAffectedKingdom(newKingdom);
 
@@ -323,45 +312,25 @@ namespace KingdomBorders
         }
 
         private void OnClanChangedKingdom(Clan clan, Kingdom oldKingdom, Kingdom newKingdom,
-    ChangeKingdomAction.ChangeKingdomActionDetail detail, bool showNotification)
+            ChangeKingdomAction.ChangeKingdomActionDetail detail, bool showNotification)
         {
             if (!_isInitialized)
                 return;
 
-            // --- Filter out events that don't affect borders ---
-            // Verified against BLSource ChangeKingdomAction.ApplyInternal:
-
-            // Mercenary clans never own fiefs, so joining/leaving as mercenary changes no borders.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.JoinAsMercenary ||
                 detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveAsMercenary)
             {
                 return;
             }
 
-            // LeaveKingdom: game loops clan.Settlements and calls
-            // ChangeOwnerOfSettlementAction.ApplyByLeaveFaction(kingdom.Leader, fief) for each.
-            // Ownership moves within the same kingdom (to the ruler's clan), so borders don't
-            // change. We also explicitly filter ByLeaveFaction in OnSettlementOwnerChanged.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveKingdom)
                 return;
 
-            // LeaveByClanDestruction: fiefs are transferred earlier by DestroyClanAction via
-            // ChangeOwnerOfSettlementAction.ApplyByDestroyClan, so OnSettlementOwnerChanged
-            // already covered each fief before this event fires.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveByClanDestruction)
                 return;
 
-            // LeaveByKingdomDestruction: fiefs are transferred earlier via DestroyClanAction
-            // on every clan of the dying kingdom (see DestroyKingdomAction.ApplyInternal).
-            // OnSettlementOwnerChanged already handled every affected fief.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveByKingdomDestruction)
                 return;
-
-            // --- Remaining cases that DO affect borders and have NO ChangeOwnerOfSettlementAction ---
-            // JoinKingdom:           clan with fiefs joins another kingdom (fiefs move with them).
-            // JoinKingdomByDefection: same as JoinKingdom.
-            // LeaveWithRebellion:    clan keeps fiefs but becomes independent (Kingdom=null).
-            // CreateKingdom:         founding clan's fiefs become territory of the new kingdom.
 
             if (oldKingdom == null && newKingdom == null)
                 return;
@@ -400,9 +369,6 @@ namespace KingdomBorders
                 }
             }
 
-            // Capture BOTH kingdoms from the event parameters. At this point clan.Settlements
-            // all report the NEW kingdom (for joins / CreateKingdom) or null (for rebellion),
-            // so oldKingdom has to come from the event.
             QueueAffectedKingdom(oldKingdom);
             QueueAffectedKingdom(newKingdom);
 
@@ -410,13 +376,6 @@ namespace KingdomBorders
             ModLog.Log($"Clan {clan.Name} changed kingdom ({detail}) with {fiefCount} fiefs — queued regen");
         }
 
-        /// <summary>
-        /// Identifies which kingdoms are affected by the changed settlements and rebuilds
-        /// only the strips whose region actually overlaps the changed AABB. Strips of
-        /// affected kingdoms that lie outside the AABB are left untouched in the scene,
-        /// and their identity keys are passed into the flush phase so the equivalent new
-        /// strips are not re-rendered.
-        /// </summary>
         private void RegenerateForSettlements(HashSet<Settlement> changedSettlements, HashSet<Kingdom> explicitlyAffectedKingdoms)
         {
             if (Renderer == null || _calculator == null)
@@ -444,9 +403,6 @@ namespace KingdomBorders
                 gridChanged = _calculator.RebuildTerritoryGridForKingdoms(explicitlyAffectedKingdoms);
             }
 
-            // If no grid cell actually flipped kingdom, no border line moved. Nothing to do.
-            // This catches no-op events (e.g. ownership reshuffles that resolve identically
-            // in Voronoi terms) without any scene mutation or segment processing.
             if (!gridChanged)
             {
                 ModLog.Log("Grid unchanged after partial rebuild — skipping regen");
@@ -455,7 +411,6 @@ namespace KingdomBorders
                 return;
             }
 
-            // --- Identify directly affected kingdoms ---
             var directlyAffected = new HashSet<Kingdom>();
             if (explicitlyAffectedKingdoms != null)
             {
@@ -489,6 +444,7 @@ namespace KingdomBorders
             {
                 ModLog.Log("No border edges found after partial grid rebuild");
                 Renderer.ClearAll();
+                FillRenderer?.ClearAll();
                 _cachedBuilders.Clear();
                 _preservedStripKeys = null;
                 _phase = BuildPhase.Idle;
@@ -532,18 +488,11 @@ namespace KingdomBorders
             foreach (var k in _affectedKingdoms)
                 ModLog.Log($"  - {k.Name}");
 
-            // --- AABB-based diff clear ---
-            // If we have partial rebuild bounds from the calculator, only nuke the strips
-            // of affected kingdoms whose AABB intersects the changed region. Everything
-            // outside stays in the scene untouched (terrain already sampled, mesh already
-            // built) and the flush phase skips re-rendering them via _preservedStripKeys.
             if (_calculator.HasLastRebuildBounds)
             {
                 float borderGap = MCMSettings.Instance?.BorderGap ?? 0.30f;
                 float borderWidth = MCMSettings.Instance?.BorderWidth ?? 1.05f;
 
-                // Expand the grid-rebuild AABB by the maximum strip offset so strip AABBs
-                // near the edge are classified correctly.
                 float stripMargin = (borderGap / 2f) + borderWidth + 1f;
 
                 float minX = _calculator.LastRebuildMinX - stripMargin;
@@ -556,8 +505,6 @@ namespace KingdomBorders
             }
             else
             {
-                // No partial AABB (e.g. kingdoms-only queue fell back to full grid rebuild).
-                // Fall back to whole-kingdom clear — identical to pre-Step-2 behavior.
                 Renderer.ClearForKingdoms(_affectedKingdoms);
                 _preservedStripKeys = null;
             }
@@ -602,6 +549,7 @@ namespace KingdomBorders
                 ModLog.Log("Scene obtained");
 
                 Renderer = new BorderRenderer(MapScene);
+                FillRenderer = new TerritoryFillRenderer(MapScene);
 
                 var kingdoms = Kingdom.All;
                 ModLog.Log($"Active kingdoms: {kingdoms.Count}");
@@ -630,23 +578,21 @@ namespace KingdomBorders
 
         private void FindEdgesAndChain()
         {
-            // Get main border edges from the cleaned grid (exclaves already removed)
             var edges = _calculator.FindBorderEdges();
 
-            // Get exclave border edges (closed loops around each exclave)
             var exclaveEdges = _calculator.FindExclaveBorderEdges();
             edges.AddRange(exclaveEdges);
 
             if (edges.Count == 0)
             {
                 ModLog.Log("No border edges found — nothing to render");
-                _phase = BuildPhase.Idle;
+                // Still kick off fill — map with a single kingdom has no borders but has fill.
+                BeginFillBuild(_affectedKingdoms);
                 return;
             }
 
             var segments = _calculator.ChainEdges(edges);
 
-            // Detect junctions before processing segments
             _junctions = _calculator.FindJunctions(segments);
             _junctionKeys = _calculator.GetJunctionKeys(_junctions);
 
@@ -674,41 +620,26 @@ namespace KingdomBorders
             return builder;
         }
 
-        /// <summary>
-        /// Returns true if the given segment should be processed in the current build.
-        /// During a partial rebuild, only segments touching at least one affected kingdom
-        /// are processed. During a full rebuild (_affectedKingdoms is null), all are processed.
-        /// </summary>
         private bool ShouldProcessSegment(BorderSegment segment)
         {
             if (_affectedKingdoms == null)
-                return true; // Full rebuild — process everything
+                return true;
 
-            // Closed-loop (exclave) segments: the surrounding kingdom can legitimately be null
-            // when the exclave borders kingdomless territory. Trust ExclaveKingdom in that case
-            // so we don't silently drop the exclave's own border during partial rebuilds.
             if (segment.IsClosedLoop && segment.ExclaveKingdom != null)
             {
                 return _affectedKingdoms.Contains(segment.ExclaveKingdom);
             }
 
-            // Process if either side of the segment belongs to an affected kingdom
             bool aAffected = segment.KingdomA != null && _affectedKingdoms.Contains(segment.KingdomA);
             bool bAffected = segment.KingdomB != null && _affectedKingdoms.Contains(segment.KingdomB);
 
             return aAffected || bAffected;
         }
 
-        /// <summary>
-        /// Returns true if the given kingdom should have its strip geometry rebuilt.
-        /// During a full rebuild, all kingdoms are rebuilt. During a partial rebuild,
-        /// only affected kingdoms get new strips — unaffected kingdoms retain their
-        /// existing cached mesh entities in the scene.
-        /// </summary>
         private bool IsKingdomAffected(Kingdom kingdom)
         {
             if (_affectedKingdoms == null)
-                return true; // Full rebuild — all kingdoms are affected
+                return true;
 
             return _affectedKingdoms.Contains(kingdom);
         }
@@ -717,7 +648,6 @@ namespace KingdomBorders
         {
             int processed = 0;
 
-            // Read MCM settings for border dimensions
             float borderGap = MCMSettings.Instance?.BorderGap ?? 0.30f;
             float borderWidth = MCMSettings.Instance?.BorderWidth ?? 1.05f;
             int cornerSmoothing = MCMSettings.Instance?.CornerSmoothing ?? 3;
@@ -736,8 +666,6 @@ namespace KingdomBorders
                     continue;
                 }
 
-                // Closed-loop exclaves may legitimately have KingdomB == null (surrounded by
-                // kingdomless territory). Don't hard-reject them on that alone.
                 bool isExclave = segment.IsClosedLoop && segment.ExclaveKingdom != null;
                 if (!isExclave && (segment.KingdomA == null || segment.KingdomB == null))
                 {
@@ -745,26 +673,20 @@ namespace KingdomBorders
                     continue;
                 }
 
-                // Skip segments that don't involve any affected kingdom (partial rebuild only)
                 if (!ShouldProcessSegment(segment))
                 {
                     _skippedCount++;
                     continue;
                 }
 
-                // === Closed loop (exclave) processing ===
                 if (segment.IsClosedLoop)
                 {
                     ProcessClosedLoopSegment(segment, innerOffset, outerOffset, cornerSmoothing);
                     continue;
                 }
 
-                // === Open segment processing ===
                 var smoothed = _calculator.SmoothChaikin(segment.Points, iterations: cornerSmoothing);
 
-                // Determine trim amount per endpoint:
-                // - At a junction: trim by outerOffset to make room for the join
-                // - Not at junction: trim by innerOffset (original behavior)
                 var headArm = _calculator.FindArmAtJunction(segment, true, _junctions, _junctionKeys);
                 var tailArm = _calculator.FindArmAtJunction(segment, false, _junctions, _junctionKeys);
 
@@ -787,8 +709,6 @@ namespace KingdomBorders
                 var rightLineInner = BorderCalculator.OffsetPolyline(smoothed, -innerOffset);
                 var rightLineOuter = BorderCalculator.OffsetPolyline(smoothed, -outerOffset);
 
-                // Only add strips for kingdoms that are being rebuilt.
-                // Unaffected kingdoms already have their mesh entities in the scene.
                 if (IsKingdomAffected(leftKingdom))
                 {
                     GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
@@ -801,8 +721,6 @@ namespace KingdomBorders
                     _renderedCount++;
                 }
 
-                // Compute outward direction at each junction endpoint.
-                // "Outward" = direction the segment travels AWAY from the junction.
                 if (headArm != null)
                 {
                     headArm.LeftKingdom = leftKingdom;
@@ -811,7 +729,6 @@ namespace KingdomBorders
                     headArm.LeftOuterPt = leftLineOuter[0];
                     headArm.RightInnerPt = rightLineInner[0];
                     headArm.RightOuterPt = rightLineOuter[0];
-                    // Head is at index 0, so outward = from index 0 toward index 1
                     Vec2 headDir = (smoothed[1] - smoothed[0]).Normalized();
                     headArm.OutwardDir = headDir;
                 }
@@ -825,7 +742,6 @@ namespace KingdomBorders
                     tailArm.LeftOuterPt = leftLineOuter[lastIdx];
                     tailArm.RightInnerPt = rightLineInner[lastIdx];
                     tailArm.RightOuterPt = rightLineOuter[lastIdx];
-                    // Tail is at last index, so outward = from last-1 toward last
                     int lastSmoothed = smoothed.Count - 1;
                     Vec2 tailDir = (smoothed[lastSmoothed] - smoothed[lastSmoothed - 1]).Normalized();
                     tailArm.OutwardDir = tailDir;
@@ -834,7 +750,6 @@ namespace KingdomBorders
 
             if (_pendingIndex >= _pendingSegments.Count)
             {
-                // Generate junction join caps before flushing
                 GenerateJunctionJoins(innerOffset, outerOffset, cornerSmoothing);
 
                 _pendingSegments = null;
@@ -850,12 +765,6 @@ namespace KingdomBorders
             }
         }
 
-        /// <summary>
-        /// Processes a closed-loop exclave segment. Uses closed-loop smoothing and
-        /// closed-loop offset so all corners are smooth with no gap at the seam.
-        /// Only draws the exclave kingdom's strip — the surrounding kingdom's strip
-        /// is suppressed because the main border already covers that area.
-        /// </summary>
         private void ProcessClosedLoopSegment(BorderSegment segment, float innerOffset, float outerOffset, int cornerSmoothing)
         {
             var smoothed = _calculator.SmoothChaikinClosed(segment.Points, iterations: cornerSmoothing);
@@ -866,30 +775,23 @@ namespace KingdomBorders
                 return;
             }
 
-            // No trimming for closed loops — they have no endpoints
-
             var (leftKingdom, rightKingdom) = _calculator.DetermineKingdomSides(
                 smoothed, segment.KingdomA, segment.KingdomB);
 
-            // Use closed-loop offset so the seam point gets properly averaged perpendiculars
             var leftLineInner = BorderCalculator.OffsetPolylineClosed(smoothed, innerOffset);
             var leftLineOuter = BorderCalculator.OffsetPolylineClosed(smoothed, outerOffset);
             var rightLineInner = BorderCalculator.OffsetPolylineClosed(smoothed, -innerOffset);
             var rightLineOuter = BorderCalculator.OffsetPolylineClosed(smoothed, -outerOffset);
 
-            // Close the loops by appending the first point at the end
             leftLineInner.Add(leftLineInner[0]);
             leftLineOuter.Add(leftLineOuter[0]);
             rightLineInner.Add(rightLineInner[0]);
             rightLineOuter.Add(rightLineOuter[0]);
 
-            // Determine which side the exclave kingdom is on.
-            // Only draw the exclave kingdom's strip to avoid overlap with the main border.
             Kingdom exclaveKingdom = segment.ExclaveKingdom;
 
             if (exclaveKingdom != null)
             {
-                // Only draw the exclave kingdom's border strip, and only if it's affected
                 if (leftKingdom == exclaveKingdom && IsKingdomAffected(leftKingdom))
                 {
                     GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
@@ -903,7 +805,6 @@ namespace KingdomBorders
             }
             else
             {
-                // Fallback: draw both sides (shouldn't normally happen for exclaves)
                 if (leftKingdom != null && IsKingdomAffected(leftKingdom))
                 {
                     GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
@@ -917,12 +818,6 @@ namespace KingdomBorders
             }
         }
 
-        /// <summary>
-        /// For each junction, finds pairs of arms that share a kingdom and generates
-        /// a smooth bevel/miter join connecting their strip endpoints.
-        /// During partial rebuilds, only junctions involving affected kingdoms AND
-        /// positioned inside the rebuild AABB are processed.
-        /// </summary>
         private void GenerateJunctionJoins(float innerOffset, float outerOffset, int cornerSmoothing)
         {
             if (_junctions == null || _junctions.Count == 0)
@@ -931,7 +826,6 @@ namespace KingdomBorders
             int curveSegments = Math.Max(3, cornerSmoothing * 3);
             int joinsGenerated = 0;
 
-            // Precompute AABB bounds for outside-junction culling during partial rebuilds.
             bool useAABB = _affectedKingdoms != null && _calculator.HasLastRebuildBounds;
             float aabbMinX = 0f, aabbMinY = 0f, aabbMaxX = 0f, aabbMaxY = 0f;
             if (useAABB)
@@ -948,8 +842,6 @@ namespace KingdomBorders
                 if (junction.Arms.Count < 2)
                     continue;
 
-                // AABB cull: junctions outside the changed region have preserved join entities
-                // in the scene; regenerating them is pure CPU waste even with skipKeys.
                 if (useAABB)
                 {
                     Vec2 p = junction.Position;
@@ -957,7 +849,6 @@ namespace KingdomBorders
                         continue;
                 }
 
-                // During partial rebuild, skip junctions that don't touch any affected kingdom
                 if (_affectedKingdoms != null)
                 {
                     bool junctionAffected = false;
@@ -974,7 +865,6 @@ namespace KingdomBorders
                         continue;
                 }
 
-                // Collect all kingdoms present at this junction
                 var kingdomsAtJunction = new HashSet<Kingdom>();
                 foreach (var arm in junction.Arms)
                 {
@@ -1095,14 +985,122 @@ namespace KingdomBorders
                 }
                 else
                 {
-                    ModLog.Log("=== Kingdom Border Renderer Done ===");
+                    ModLog.Log("=== Kingdom Border Renderer Done (strips) ===");
                 }
 
                 _pendingFlush = null;
-                _affectedKingdoms = null;
-                _preservedStripKeys = null;
-                _phase = BuildPhase.Idle;
+
+                // Borders done — transition to the fill phase for the same kingdom set.
+                BeginFillBuild(_affectedKingdoms);
             }
+        }
+
+        /// <summary>
+        /// Prepares the fill build queue for the specified kingdoms (null = all).
+        /// Respects the ShowTerritoryFill MCM toggle. Transitions to Idle if no fill
+        /// work is needed, or to BuildPhase.BuildingFill otherwise.
+        /// </summary>
+        private void BeginFillBuild(HashSet<Kingdom> kingdomFilter)
+        {
+            var settings = MCMSettings.Instance;
+            bool showFill = settings?.ShowTerritoryFill ?? true;
+
+            if (FillRenderer == null || !showFill)
+            {
+                // Fill disabled or not ready — finalize straight to Idle.
+                FinalizeRebuild();
+                return;
+            }
+
+            var cellsByKingdom = _calculator.CollectKingdomCells(kingdomFilter);
+
+            if (cellsByKingdom.Count == 0)
+            {
+                // Nothing to build — clear any stale fills for affected kingdoms.
+                if (kingdomFilter != null)
+                    FillRenderer.ClearForKingdoms(kingdomFilter);
+                FinalizeRebuild();
+                return;
+            }
+
+            _pendingFillCells = cellsByKingdom;
+            _pendingFillOrder = new List<Kingdom>(cellsByKingdom.Keys);
+            _fillIndex = 0;
+            _phase = BuildPhase.BuildingFill;
+
+            int totalCells = 0;
+            foreach (var kv in cellsByKingdom)
+                totalCells += kv.Value.Count;
+            ModLog.Log($"Fill build: {_pendingFillOrder.Count} kingdoms, {totalCells} cells");
+        }
+
+        /// <summary>
+        /// Fill-only rebuild triggered by MCM (ShowTerritoryFill toggled on).
+        /// Walks all kingdoms without touching the border pipeline.
+        /// </summary>
+        private void BeginFillOnlyRebuild()
+        {
+            if (FillRenderer == null || _calculator == null)
+                return;
+
+            FillRenderer.ClearAll();
+            BeginFillBuild(null);
+        }
+
+        private void ProcessFillBuildIncremental()
+        {
+            if (FillRenderer == null || _pendingFillOrder == null)
+            {
+                FinalizeRebuild();
+                return;
+            }
+
+            float heightOffset = MCMSettings.Instance?.HeightOffset ?? 0.55f;
+            // Sit the fill just below the border strips to avoid z-fighting at edges.
+            float fillHeightOffset = Math.Max(0.05f, heightOffset - 0.08f);
+            bool showOnWater = MCMSettings.Instance?.ShowBordersOnWater ?? true;
+            bool hideWater = !showOnWater;
+
+            int processedThisTick = 0;
+
+            while (_fillIndex < _pendingFillOrder.Count && processedThisTick < FillKingdomsPerTick)
+            {
+                var kingdom = _pendingFillOrder[_fillIndex];
+                _fillIndex++;
+                processedThisTick++;
+
+                if (!_pendingFillCells.TryGetValue(kingdom, out var cells) || cells.Count == 0)
+                    continue;
+
+                uint color = BorderCalculator.GetKingdomColor(kingdom);
+
+                // cornerToWorld is a thin closure over the calculator — avoids copying
+                // map bounds into the renderer.
+                System.Func<int, int, Vec2> cornerToWorld = _calculator.GetGridCornerWorldPos;
+
+                FillRenderer.BuildKingdomFill(
+                    kingdom,
+                    color,
+                    cells,
+                    cornerToWorld,
+                    fillHeightOffset,
+                    hideWater);
+            }
+
+            if (_fillIndex >= _pendingFillOrder.Count)
+            {
+                ModLog.Log($"Fill build complete: {FillRenderer.EntityCount} kingdom fill entities");
+                _pendingFillOrder = null;
+                _pendingFillCells = null;
+                FinalizeRebuild();
+            }
+        }
+
+        private void FinalizeRebuild()
+        {
+            _affectedKingdoms = null;
+            _preservedStripKeys = null;
+            _phase = BuildPhase.Idle;
         }
 
         public void Cleanup()
@@ -1113,11 +1111,18 @@ namespace KingdomBorders
                 Renderer.ClearAll();
                 Renderer = null;
             }
+            if (FillRenderer != null)
+            {
+                FillRenderer.ClearAll();
+                FillRenderer = null;
+            }
             _cachedBuilders = null;
             _affectedKingdoms = null;
             _preservedStripKeys = null;
             _pendingRegenSettlements = null;
             _pendingRegenKingdoms = null;
+            _pendingFillCells = null;
+            _pendingFillOrder = null;
             _isInitialized = false;
             _phase = BuildPhase.Idle;
         }

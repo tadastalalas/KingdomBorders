@@ -40,6 +40,14 @@ namespace KingdomBorders
 
         public int CornerSmoothing { get; set; } = 3;
 
+        [SettingPropertyBool("Show Territory Fill", Order = 0, RequireRestart = false, HintText = "Paint each kingdom's interior territory in its banner color. [Default: enabled]")]
+        [SettingPropertyGroup("Territory Fill", GroupOrder = 2)]
+        public bool ShowTerritoryFill { get; set; } = true;
+
+        [SettingPropertyFloatingInteger("Fill Opacity", 0.0f, 0.6f, "#0.00", Order = 1, RequireRestart = false, HintText = "Maximum transparency of the interior fill. Lower values look subtler. [Default: 0.10]")]
+        [SettingPropertyGroup("Territory Fill", GroupOrder = 2)]
+        public float FillOpacity { get; set; } = 0.10f;
+
         [SettingPropertyBool("Show Borders on Water", Order = 0, RequireRestart = false, HintText = "Renders borders over water surfaces. [Default: enabled]")]
         [SettingPropertyGroup("Experimental", GroupOrder = 99)]
         public bool ShowBordersOnWater { get; set; } = true;

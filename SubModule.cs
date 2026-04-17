@@ -40,13 +40,22 @@ namespace KingdomBorders
             if (_borderBehavior == null)
                 return;
 
-            // Drive the build pipeline every frame — works even while paused on load
             _borderBehavior.ApplicationTick();
 
-            if (_borderBehavior.Renderer != null && _borderBehavior.MapScene != null)
+            if (_borderBehavior.MapScene == null)
+                return;
+
+            float cameraHeight = _borderBehavior.MapScene.LastFinalRenderCameraPosition.z;
+
+            if (_borderBehavior.Renderer != null)
             {
-                float cameraHeight = _borderBehavior.MapScene.LastFinalRenderCameraPosition.z;
                 _borderBehavior.Renderer.UpdateAlphaForCameraDistance(cameraHeight);
+            }
+
+            if (_borderBehavior.FillRenderer != null)
+            {
+                float fillOpacity = MCMSettings.Instance?.FillOpacity ?? 0.20f;
+                _borderBehavior.FillRenderer.UpdateAlphaForCameraDistance(cameraHeight, fillOpacity);
             }
         }
 

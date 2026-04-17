@@ -88,7 +88,7 @@ namespace KingdomBorders
         public List<(int x, int y)> Cells;
     }
 
-    public class BorderCalculator
+    public partial class BorderCalculator
     {
         private readonly int _gridResolution;
         private Vec2 _mapMin;
