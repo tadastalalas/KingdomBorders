@@ -45,6 +45,12 @@ namespace KingdomBorders
 
         // Queued regeneration — accumulated while builds may be in progress
         private HashSet<Settlement> _pendingRegenSettlements;
+
+        // Explicitly tracked kingdoms that must be rebuilt (captured directly from events,
+        // since after the event fires the settlement/clan references no longer point at the
+        // old kingdom and we'd otherwise lose that side of the border).
+        private HashSet<Kingdom> _pendingRegenKingdoms;
+
         private bool _regenRequested;
         private bool _fullRebuildRequested;
 
@@ -159,6 +165,7 @@ namespace KingdomBorders
                 _fullRebuildRequested = false;
                 _regenRequested = false;
                 _pendingRegenSettlements = null;
+                _pendingRegenKingdoms = null;
 
                 ModLog.Log("Processing queued full rebuild");
                 FullRebuild();
@@ -169,11 +176,16 @@ namespace KingdomBorders
             {
                 _regenRequested = false;
                 var settlements = _pendingRegenSettlements;
+                var kingdoms = _pendingRegenKingdoms;
                 _pendingRegenSettlements = null;
+                _pendingRegenKingdoms = null;
 
-                if (settlements != null && settlements.Count > 0)
+                bool hasSettlements = settlements != null && settlements.Count > 0;
+                bool hasKingdoms = kingdoms != null && kingdoms.Count > 0;
+
+                if (hasSettlements || hasKingdoms)
                 {
-                    RegenerateForSettlements(settlements);
+                    RegenerateForSettlements(settlements, kingdoms);
                 }
                 return;
             }
@@ -241,6 +253,23 @@ namespace KingdomBorders
             _phase = BuildPhase.BuildingGrid;
         }
 
+        /// <summary>
+        /// Adds a kingdom to the pending regen set if non-null. Called from event handlers
+        /// to explicitly capture both the old and new kingdom sides of a border change,
+        /// since after the event fires the settlement/clan references no longer point
+        /// at the old kingdom.
+        /// </summary>
+        private void QueueAffectedKingdom(Kingdom kingdom)
+        {
+            if (kingdom == null)
+                return;
+
+            if (_pendingRegenKingdoms == null)
+                _pendingRegenKingdoms = new HashSet<Kingdom>();
+
+            _pendingRegenKingdoms.Add(kingdom);
+        }
+
         private void OnSettlementOwnerChanged(Settlement settlement, bool openToClaim,
             Hero newOwner, Hero oldOwner, Hero capturerHero,
             ChangeOwnerOfSettlementAction.ChangeOwnerOfSettlementDetail detail)
@@ -256,7 +285,10 @@ namespace KingdomBorders
                 return;
 
             // Skip villages — their bound town/castle changing hands already covers them,
-            // and we add bound villages explicitly below when tracking a town/castle
+            // and we add bound villages explicitly below when tracking a town/castle.
+            // Verified against BLSource: ChangeOwnerOfSettlementAction.ApplyInternal fires
+            // a single OnSettlementOwnerChanged for the target settlement only — bound
+            // villages get SetVisualAsDirty() but no event, so we must re-add them here.
             if (settlement.IsVillage)
                 return;
 
@@ -275,6 +307,12 @@ namespace KingdomBorders
                 }
             }
 
+            // Capture BOTH sides explicitly. The old kingdom may have lost its only
+            // adjacency with the new kingdom, so segment-neighbor expansion in
+            // RegenerateForSettlements might not rediscover it.
+            QueueAffectedKingdom(oldKingdom);
+            QueueAffectedKingdom(newKingdom);
+
             _regenRequested = true;
         }
 
@@ -285,6 +323,7 @@ namespace KingdomBorders
                 return;
 
             // --- Filter out events that don't affect borders ---
+            // Verified against BLSource ChangeKingdomAction.ApplyInternal:
 
             // Mercenary clans never own fiefs, so joining/leaving as mercenary changes no borders.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.JoinAsMercenary ||
@@ -293,30 +332,33 @@ namespace KingdomBorders
                 return;
             }
 
-            // LeaveKingdom: the game transfers each fief via ChangeOwnerOfSettlementAction
-            // before this event fires, so OnSettlementOwnerChanged already covers everything.
+            // LeaveKingdom: game loops clan.Settlements and calls
+            // ChangeOwnerOfSettlementAction.ApplyByLeaveFaction(kingdom.Leader, fief) for each.
+            // Ownership moves within the same kingdom (to the ruler's clan), so borders don't
+            // change — OnSettlementOwnerChanged fires redundantly but is harmless.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveKingdom)
                 return;
 
-            // LeaveByClanDestruction: same as above — fiefs are transferred to an heir clan
-            // via ChangeOwnerOfSettlementAction before this fires.
+            // LeaveByClanDestruction: fiefs are transferred earlier by DestroyClanAction via
+            // ChangeOwnerOfSettlementAction.ApplyByDestroyClan, so OnSettlementOwnerChanged
+            // already covered each fief before this event fires.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveByClanDestruction)
                 return;
 
-            // LeaveByKingdomDestruction: fiefs transferred before this fires, and
-            // KingdomDestroyedEvent will queue a full rebuild separately.
+            // LeaveByKingdomDestruction: no fief transfer happens in ChangeKingdomAction itself,
+            // but KingdomDestroyedEvent fires separately and queues a full rebuild.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveByKingdomDestruction)
                 return;
 
-            // CreateKingdom: KingdomCreatedEvent will queue a full rebuild separately.
+            // CreateKingdom: clan keeps its fiefs, kingdom changes. KingdomCreatedEvent
+            // fires separately and queues a full rebuild.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.CreateKingdom)
                 return;
 
-            // --- Remaining cases that DO affect borders ---
-            // JoinKingdom: clan with fiefs joins another kingdom (fiefs move with them, no
-            //   OnSettlementOwnerChanged fires because the clan still owns the settlements).
+            // --- Remaining cases that DO affect borders and have NO ChangeOwnerOfSettlementAction ---
+            // JoinKingdom:           clan with fiefs joins another kingdom (fiefs move with them).
             // JoinKingdomByDefection: same as JoinKingdom.
-            // LeaveWithRebellion: clan keeps fiefs but is now independent.
+            // LeaveWithRebellion:    clan keeps fiefs but becomes independent (Kingdom=null).
 
             if (oldKingdom == null && newKingdom == null)
                 return;
@@ -338,11 +380,13 @@ namespace KingdomBorders
             if (_pendingRegenSettlements == null)
                 _pendingRegenSettlements = new HashSet<Settlement>();
 
+            int fiefCount = 0;
             foreach (var s in clan.Settlements)
             {
                 if (s.IsTown || s.IsCastle)
                 {
                     _pendingRegenSettlements.Add(s);
+                    fiefCount++;
                     if (s.BoundVillages != null)
                     {
                         foreach (var village in s.BoundVillages)
@@ -354,18 +398,25 @@ namespace KingdomBorders
                 }
             }
 
+            // Capture BOTH kingdoms from the event parameters. At this point clan.Settlements
+            // all report the NEW kingdom (for joins) or null (for rebellion), so we cannot
+            // rediscover oldKingdom from settlements alone — it has to come from the event.
+            QueueAffectedKingdom(oldKingdom);
+            QueueAffectedKingdom(newKingdom);
+
             _regenRequested = true;
-            ModLog.Log($"Clan {clan.Name} changed kingdom ({detail}) with {clan.Settlements.Count(s => s.IsTown || s.IsCastle)} fiefs — queued regen");
+            ModLog.Log($"Clan {clan.Name} changed kingdom ({detail}) with {fiefCount} fiefs — queued regen");
         }
 
         /// <summary>
-        /// Identifies which kingdoms are directly affected by the changed settlements,
-        /// then determines the full set of kingdoms that need regeneration by expanding
-        /// to include any kingdom that shares a border segment with an affected one.
-        /// Only clears and rebuilds those kingdoms; unaffected kingdoms keep their
-        /// cached mesh entities in the scene.
+        /// Identifies which kingdoms are directly affected by the changed settlements
+        /// (plus any kingdoms explicitly queued via events where the old side can't be
+        /// rediscovered from settlement ownership), then determines the full set of
+        /// kingdoms that need regeneration by expanding to include any kingdom that
+        /// shares a border segment with an affected one. Only clears and rebuilds those
+        /// kingdoms; unaffected kingdoms keep their cached mesh entities in the scene.
         /// </summary>
-        private void RegenerateForSettlements(HashSet<Settlement> changedSettlements)
+        private void RegenerateForSettlements(HashSet<Settlement> changedSettlements, HashSet<Kingdom> explicitlyAffectedKingdoms)
         {
             if (Renderer == null || _calculator == null)
                 return;
@@ -378,34 +429,55 @@ namespace KingdomBorders
                 return;
             }
 
-            ModLog.Log($"Regenerating borders for {changedSettlements.Count} changed settlements...");
+            int settlementCount = changedSettlements?.Count ?? 0;
+            int explicitKingdomCount = explicitlyAffectedKingdoms?.Count ?? 0;
+            ModLog.Log($"Regenerating borders for {settlementCount} changed settlements " +
+                       $"and {explicitKingdomCount} explicitly queued kingdoms...");
 
             // Rebuild the grid around changed settlements (fast partial rebuild).
             // This also re-detects exclaves on the full grid.
-            _calculator.RebuildTerritoryGridAroundSettlements(changedSettlements);
-
-            // --- Identify directly affected kingdoms ---
-            // These are the old and new owners' kingdoms for the changed settlements.
-            var directlyAffected = new HashSet<Kingdom>();
-            foreach (var s in changedSettlements)
+            if (settlementCount > 0)
             {
-                Kingdom kingdom;
-                if (s.IsVillage)
-                    kingdom = s.Village?.Bound?.OwnerClan?.Kingdom;
-                else
-                    kingdom = s.OwnerClan?.Kingdom;
-
-                if (kingdom != null)
-                    directlyAffected.Add(kingdom);
+                _calculator.RebuildTerritoryGridAroundSettlements(changedSettlements);
+            }
+            else
+            {
+                // Kingdoms queued without settlements (rare): we still need to refresh
+                // exclave/ownership state. Fall back to a broader rebuild.
+                _calculator.RebuildTerritoryGridForKingdoms(explicitlyAffectedKingdoms);
             }
 
-            // Also check what kingdoms WERE in the cached builders that owned borders
-            // near these settlements — those are the "old" owners whose borders shrank.
-            // We detect them by finding all edges from the updated grid and checking
-            // which cached kingdoms have segments touching the affected area.
-            // For simplicity and correctness, we do a full edge scan (fast) and expand
-            // the affected set to include all neighbors that share any border segment
-            // with a directly affected kingdom.
+            // --- Identify directly affected kingdoms ---
+            // Seed from the kingdoms explicitly captured at event time.
+            var directlyAffected = new HashSet<Kingdom>();
+            if (explicitlyAffectedKingdoms != null)
+            {
+                foreach (var k in explicitlyAffectedKingdoms)
+                {
+                    if (k != null)
+                        directlyAffected.Add(k);
+                }
+            }
+
+            // Also add current kingdom of each changed settlement (covers the new-owner side
+            // even if it wasn't captured via the event path for some reason).
+            if (changedSettlements != null)
+            {
+                foreach (var s in changedSettlements)
+                {
+                    Kingdom kingdom;
+                    if (s.IsVillage)
+                        kingdom = s.Village?.Bound?.OwnerClan?.Kingdom;
+                    else
+                        kingdom = s.OwnerClan?.Kingdom;
+
+                    if (kingdom != null)
+                        directlyAffected.Add(kingdom);
+                }
+            }
+
+            // Do a full edge scan (fast) and expand the affected set to include all
+            // neighbors that share any border segment with a directly affected kingdom.
             var edges = _calculator.FindBorderEdges();
             var exclaveEdges = _calculator.FindExclaveBorderEdges();
             edges.AddRange(exclaveEdges);
@@ -588,6 +660,14 @@ namespace KingdomBorders
             if (_affectedKingdoms == null)
                 return true; // Full rebuild — process everything
 
+            // Closed-loop (exclave) segments: the surrounding kingdom can legitimately be null
+            // when the exclave borders kingdomless territory. Trust ExclaveKingdom in that case
+            // so we don't silently drop the exclave's own border during partial rebuilds.
+            if (segment.IsClosedLoop && segment.ExclaveKingdom != null)
+            {
+                return _affectedKingdoms.Contains(segment.ExclaveKingdom);
+            }
+
             // Process if either side of the segment belongs to an affected kingdom
             bool aAffected = segment.KingdomA != null && _affectedKingdoms.Contains(segment.KingdomA);
             bool bAffected = segment.KingdomB != null && _affectedKingdoms.Contains(segment.KingdomB);
@@ -632,7 +712,10 @@ namespace KingdomBorders
                     continue;
                 }
 
-                if (segment.KingdomA == null || segment.KingdomB == null)
+                // Closed-loop exclaves may legitimately have KingdomB == null (surrounded by
+                // kingdomless territory). Don't hard-reject them on that alone.
+                bool isExclave = segment.IsClosedLoop && segment.ExclaveKingdom != null;
+                if (!isExclave && (segment.KingdomA == null || segment.KingdomB == null))
                 {
                     _skippedCount++;
                     continue;
@@ -797,12 +880,12 @@ namespace KingdomBorders
             else
             {
                 // Fallback: draw both sides (shouldn't normally happen for exclaves)
-                if (IsKingdomAffected(leftKingdom))
+                if (leftKingdom != null && IsKingdomAffected(leftKingdom))
                 {
                     GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
                     _renderedCount++;
                 }
-                if (IsKingdomAffected(rightKingdom))
+                if (rightKingdom != null && IsKingdomAffected(rightKingdom))
                 {
                     GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
                     _renderedCount++;
@@ -990,6 +1073,8 @@ namespace KingdomBorders
             }
             _cachedBuilders = null;
             _affectedKingdoms = null;
+            _pendingRegenSettlements = null;
+            _pendingRegenKingdoms = null;
             _isInitialized = false;
             _phase = BuildPhase.Idle;
         }
