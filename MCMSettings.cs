@@ -38,8 +38,6 @@ namespace KingdomBorders
         [SettingPropertyGroup("Appearance", GroupOrder = 1)]
         public float HeightOffset { get; set; } = 0.55f;
 
-        //[SettingPropertyInteger("Corner Smoothing", 1, 5, Order = 3, RequireRestart = false, HintText = "Controls how smooth corners and junctions are. Higher values produce rounder curves but use more geometry. Also affects segment smoothing. [Default: 3]")]
-        //[SettingPropertyGroup("Appearance", GroupOrder = 1)]
         public int CornerSmoothing { get; set; } = 3;
 
         [SettingPropertyBool("Show Borders on Water", Order = 0, RequireRestart = false, HintText = "Renders borders over water surfaces. [Default: enabled]")]
