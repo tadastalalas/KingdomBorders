@@ -88,8 +88,14 @@ namespace KingdomBorders
             CampaignEvents.OnNewGameCreatedEvent.AddNonSerializedListener(this, OnNewGameCreated);
             CampaignEvents.OnSettlementOwnerChangedEvent.AddNonSerializedListener(this, OnSettlementOwnerChanged);
             CampaignEvents.OnClanChangedKingdomEvent.AddNonSerializedListener(this, OnClanChangedKingdom);
-            CampaignEvents.KingdomDestroyedEvent.AddNonSerializedListener(this, OnKingdomDestroyed);
-            CampaignEvents.KingdomCreatedEvent.AddNonSerializedListener(this, OnKingdomCreated);
+
+            // KingdomCreatedEvent / KingdomDestroyedEvent are intentionally NOT subscribed:
+            //  - KingdomDestroyed fires AFTER every fief has already been transferred via
+            //    ChangeOwnerOfSettlementAction, so OnSettlementOwnerChanged has already
+            //    handled all border changes by the time this would fire.
+            //  - KingdomCreated is handled via OnClanChangedKingdom(detail=CreateKingdom),
+            //    which gives us the founder clan + both old/new kingdoms for a surgical
+            //    partial rebuild instead of a full-map rebuild.
         }
 
         public override void SyncData(IDataStore dataStore)
@@ -104,24 +110,6 @@ namespace KingdomBorders
         private void OnNewGameCreated(CampaignGameStarter starter)
         {
             BeginBuildBorders();
-        }
-
-        private void OnKingdomDestroyed(Kingdom kingdom)
-        {
-            if (!_isInitialized)
-                return;
-
-            ModLog.Log($"Kingdom destroyed: {kingdom.Name} — queuing full rebuild");
-            _fullRebuildRequested = true;
-        }
-
-        private void OnKingdomCreated(Kingdom kingdom)
-        {
-            if (!_isInitialized)
-                return;
-
-            ModLog.Log($"Kingdom created: {kingdom.Name} — queuing full rebuild");
-            _fullRebuildRequested = true;
         }
 
         /// <summary>
@@ -277,10 +265,17 @@ namespace KingdomBorders
         }
 
         private void OnSettlementOwnerChanged(Settlement settlement, bool openToClaim,
-            Hero newOwner, Hero oldOwner, Hero capturerHero,
-            ChangeOwnerOfSettlementAction.ChangeOwnerOfSettlementDetail detail)
+    Hero newOwner, Hero oldOwner, Hero capturerHero,
+    ChangeOwnerOfSettlementAction.ChangeOwnerOfSettlementDetail detail)
         {
             if (!_isInitialized)
+                return;
+
+            // Verified against BLSource ChangeKingdomAction.ApplyInternal:
+            // ByLeaveFaction only fires during LeaveKingdom, transferring the fief from the
+            // leaving clan to the ruler clan of the SAME kingdom. Territory doesn't change,
+            // so any regen is pure waste.
+            if (detail == ChangeOwnerOfSettlementAction.ChangeOwnerOfSettlementDetail.ByLeaveFaction)
                 return;
 
             var oldKingdom = oldOwner?.Clan?.Kingdom;
@@ -288,6 +283,12 @@ namespace KingdomBorders
 
             // Skip if neither side belongs to a kingdom — no visible borders affected
             if (oldKingdom == null && newKingdom == null)
+                return;
+
+            // Skip same-kingdom transfers (ByKingDecision after siege, gifts within a realm,
+            // same-kingdom barters, etc.). The fief stays inside the same kingdom's territory
+            // so no border line moves.
+            if (oldKingdom != null && newKingdom != null && oldKingdom == newKingdom)
                 return;
 
             // Skip villages — their bound town/castle changing hands already covers them,
@@ -303,7 +304,6 @@ namespace KingdomBorders
 
             _pendingRegenSettlements.Add(settlement);
 
-            // Include bound villages since they use the parent's kingdom for grid ownership
             if (settlement.BoundVillages != null)
             {
                 foreach (var village in settlement.BoundVillages)
@@ -323,7 +323,7 @@ namespace KingdomBorders
         }
 
         private void OnClanChangedKingdom(Clan clan, Kingdom oldKingdom, Kingdom newKingdom,
-            ChangeKingdomAction.ChangeKingdomActionDetail detail, bool showNotification)
+    ChangeKingdomAction.ChangeKingdomActionDetail detail, bool showNotification)
         {
             if (!_isInitialized)
                 return;
@@ -341,7 +341,7 @@ namespace KingdomBorders
             // LeaveKingdom: game loops clan.Settlements and calls
             // ChangeOwnerOfSettlementAction.ApplyByLeaveFaction(kingdom.Leader, fief) for each.
             // Ownership moves within the same kingdom (to the ruler's clan), so borders don't
-            // change — OnSettlementOwnerChanged fires redundantly but is harmless.
+            // change. We also explicitly filter ByLeaveFaction in OnSettlementOwnerChanged.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveKingdom)
                 return;
 
@@ -351,25 +351,21 @@ namespace KingdomBorders
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveByClanDestruction)
                 return;
 
-            // LeaveByKingdomDestruction: no fief transfer happens in ChangeKingdomAction itself,
-            // but KingdomDestroyedEvent fires separately and queues a full rebuild.
+            // LeaveByKingdomDestruction: fiefs are transferred earlier via DestroyClanAction
+            // on every clan of the dying kingdom (see DestroyKingdomAction.ApplyInternal).
+            // OnSettlementOwnerChanged already handled every affected fief.
             if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.LeaveByKingdomDestruction)
-                return;
-
-            // CreateKingdom: clan keeps its fiefs, kingdom changes. KingdomCreatedEvent
-            // fires separately and queues a full rebuild.
-            if (detail == ChangeKingdomAction.ChangeKingdomActionDetail.CreateKingdom)
                 return;
 
             // --- Remaining cases that DO affect borders and have NO ChangeOwnerOfSettlementAction ---
             // JoinKingdom:           clan with fiefs joins another kingdom (fiefs move with them).
             // JoinKingdomByDefection: same as JoinKingdom.
             // LeaveWithRebellion:    clan keeps fiefs but becomes independent (Kingdom=null).
+            // CreateKingdom:         founding clan's fiefs become territory of the new kingdom.
 
             if (oldKingdom == null && newKingdom == null)
                 return;
 
-            // Check if this clan actually owns any fiefs — if not, no borders change
             bool hasRelevantFiefs = false;
             foreach (var s in clan.Settlements)
             {
@@ -405,8 +401,8 @@ namespace KingdomBorders
             }
 
             // Capture BOTH kingdoms from the event parameters. At this point clan.Settlements
-            // all report the NEW kingdom (for joins) or null (for rebellion), so we cannot
-            // rediscover oldKingdom from settlements alone — it has to come from the event.
+            // all report the NEW kingdom (for joins / CreateKingdom) or null (for rebellion),
+            // so oldKingdom has to come from the event.
             QueueAffectedKingdom(oldKingdom);
             QueueAffectedKingdom(newKingdom);
 
@@ -438,13 +434,25 @@ namespace KingdomBorders
             ModLog.Log($"Regenerating borders for {settlementCount} changed settlements " +
                        $"and {explicitKingdomCount} explicitly queued kingdoms...");
 
+            bool gridChanged;
             if (settlementCount > 0)
             {
-                _calculator.RebuildTerritoryGridAroundSettlements(changedSettlements);
+                gridChanged = _calculator.RebuildTerritoryGridAroundSettlements(changedSettlements);
             }
             else
             {
-                _calculator.RebuildTerritoryGridForKingdoms(explicitlyAffectedKingdoms);
+                gridChanged = _calculator.RebuildTerritoryGridForKingdoms(explicitlyAffectedKingdoms);
+            }
+
+            // If no grid cell actually flipped kingdom, no border line moved. Nothing to do.
+            // This catches no-op events (e.g. ownership reshuffles that resolve identically
+            // in Voronoi terms) without any scene mutation or segment processing.
+            if (!gridChanged)
+            {
+                ModLog.Log("Grid unchanged after partial rebuild — skipping regen");
+                _preservedStripKeys = null;
+                _phase = BuildPhase.Idle;
+                return;
             }
 
             // --- Identify directly affected kingdoms ---
@@ -912,7 +920,8 @@ namespace KingdomBorders
         /// <summary>
         /// For each junction, finds pairs of arms that share a kingdom and generates
         /// a smooth bevel/miter join connecting their strip endpoints.
-        /// During partial rebuilds, only junctions involving affected kingdoms are processed.
+        /// During partial rebuilds, only junctions involving affected kingdoms AND
+        /// positioned inside the rebuild AABB are processed.
         /// </summary>
         private void GenerateJunctionJoins(float innerOffset, float outerOffset, int cornerSmoothing)
         {
@@ -922,10 +931,31 @@ namespace KingdomBorders
             int curveSegments = Math.Max(3, cornerSmoothing * 3);
             int joinsGenerated = 0;
 
+            // Precompute AABB bounds for outside-junction culling during partial rebuilds.
+            bool useAABB = _affectedKingdoms != null && _calculator.HasLastRebuildBounds;
+            float aabbMinX = 0f, aabbMinY = 0f, aabbMaxX = 0f, aabbMaxY = 0f;
+            if (useAABB)
+            {
+                float margin = outerOffset + 1f;
+                aabbMinX = _calculator.LastRebuildMinX - margin;
+                aabbMinY = _calculator.LastRebuildMinY - margin;
+                aabbMaxX = _calculator.LastRebuildMaxX + margin;
+                aabbMaxY = _calculator.LastRebuildMaxY + margin;
+            }
+
             foreach (var junction in _junctions)
             {
                 if (junction.Arms.Count < 2)
                     continue;
+
+                // AABB cull: junctions outside the changed region have preserved join entities
+                // in the scene; regenerating them is pure CPU waste even with skipKeys.
+                if (useAABB)
+                {
+                    Vec2 p = junction.Position;
+                    if (p.x < aabbMinX || p.x > aabbMaxX || p.y < aabbMinY || p.y > aabbMaxY)
+                        continue;
+                }
 
                 // During partial rebuild, skip junctions that don't touch any affected kingdom
                 if (_affectedKingdoms != null)
@@ -957,11 +987,9 @@ namespace KingdomBorders
                     if (kingdom == null)
                         continue;
 
-                    // During partial rebuild, only generate joins for affected kingdoms
                     if (!IsKingdomAffected(kingdom))
                         continue;
 
-                    // Collect strip endpoints and outward directions for this kingdom
                     var stripEnds = new List<(Vec2 inner, Vec2 outer, Vec2 outwardDir, float angle)>();
 
                     foreach (var arm in junction.Arms)
@@ -987,7 +1015,6 @@ namespace KingdomBorders
                     if (stripEnds.Count < 2)
                         continue;
 
-                    // Sort by angle around the junction center
                     stripEnds.Sort((a, b) => a.angle.CompareTo(b.angle));
 
                     if (stripEnds.Count == 2)
@@ -1005,7 +1032,6 @@ namespace KingdomBorders
                     }
                     else
                     {
-                        // 3+ strip endpoints: connect adjacent pairs around the junction
                         for (int i = 0; i < stripEnds.Count; i++)
                         {
                             int next = (i + 1) % stripEnds.Count;
