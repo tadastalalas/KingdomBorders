@@ -8,16 +8,30 @@ using TaleWorlds.Library;
 namespace KingdomBorders
 {
     /// <summary>
-    /// Tracks a rendered border entity so it can be selectively removed per-kingdom.
+    /// Tracks a rendered border entity so it can be selectively removed per-kingdom
+    /// and matched against newly generated strips by identity for AABB-based diff rebuilding.
     /// </summary>
     public class BorderEntityEntry
     {
         public GameEntity Entity;
         public Kingdom Kingdom;
+
+        // 2D world-space AABB of the strip (used by the diff logic).
+        public float MinX;
+        public float MinY;
+        public float MaxX;
+        public float MaxY;
+
+        // Stable hash over kingdom + quantized endpoint positions so we can
+        // match "same strip" across rebuilds and skip regeneration when the
+        // geometry didn't actually change.
+        public long IdentityKey;
     }
 
     /// <summary>
-    /// Collects strip geometry for a kingdom before creating the final mesh.
+    /// Collects strip geometry for a kingdom before creating the final meshes.
+    /// Each strip becomes its own GameEntity/Mesh so partial rebuilds can
+    /// touch only the strips whose region actually changed.
     /// </summary>
     public class KingdomMeshBuilder
     {
@@ -31,50 +45,95 @@ namespace KingdomBorders
         private readonly Scene _scene;
         private readonly List<BorderEntityEntry> _entries = new List<BorderEntityEntry>();
 
+        // Cached materials — one per hideWater flag value. The flag is stable across
+        // a build (MCM changes trigger a full rebuild) and the material itself is
+        // engine-owned, so we reuse the two instances for every strip of every kingdom.
+        private Material _matHideWater;
+        private Material _matShowWater;
+
         public BorderRenderer(Scene scene)
         {
             _scene = scene;
         }
 
         /// <summary>
-        /// Creates a single mesh entity containing all strips for a kingdom.
-        /// Because all strips share the same color, overlapping at junctions is invisible.
+        /// Creates one mesh entity per strip in the builder and appends them to the entry list.
+        /// Strips whose identity key is already present in <paramref name="skipKeys"/> are
+        /// skipped because the equivalent entity is still alive in the scene (preserved by an
+        /// earlier AABB cull). Returns the number of new entities actually created.
         /// </summary>
-        public GameEntity RenderKingdomStrips(KingdomMeshBuilder builder, float heightOffset)
+        public int RenderKingdomStrips(KingdomMeshBuilder builder, float heightOffset, HashSet<long> skipKeys = null)
         {
             if (builder.Strips.Count == 0)
-                return null;
-
-            Material mat = Material.GetFromResource("vertex_color_mat");
-            if (mat == null)
-            {
-                ModLog.Log("FAIL: vertex_color_mat not found");
-                return null;
-            }
+                return 0;
 
             bool showOnWater = MCMSettings.Instance?.ShowBordersOnWater ?? false;
             bool hideWater = !showOnWater;
 
-            // Create a copy so we don't modify the shared resource material.
-            Material borderMat = mat.CreateCopy();
+            Material mat = GetOrCreateMaterial(hideWater);
+            if (mat == null)
+                return 0;
 
-            // Always prevent depth buffer writes so we never make the water
-            // surface transparent (the water shader reads the depth buffer).
-            borderMat.Flags |= MaterialFlags.NoModifyDepthBuffer;
-
-            if (hideWater)
+            int created = 0;
+            foreach (var (inner2D, outer2D) in builder.Strips)
             {
-                // Default mode: borders hidden on water.
-                // NoDepthTest renders borders without depth testing, which fixes
-                // minor clipping with trees and mountain geometry.
-                borderMat.Flags |= MaterialFlags.NoDepthTest;
+                if (CreateStripEntity(builder.Kingdom, builder.Color, mat, inner2D, outer2D, heightOffset, hideWater, skipKeys) != null)
+                {
+                    created++;
+                }
             }
-            else
+
+            return created;
+        }
+
+        /// <summary>
+        /// Builds a single strip (one quad ribbon) as its own GameEntity,
+        /// unless its identity key is in <paramref name="skipKeys"/> (preserved from before).
+        /// </summary>
+        private GameEntity CreateStripEntity(
+            Kingdom kingdom,
+            uint color,
+            Material mat,
+            List<Vec2> inner2D,
+            List<Vec2> outer2D,
+            float heightOffset,
+            bool hideWater,
+            HashSet<long> skipKeys)
+        {
+            // Identity-first: if this strip already exists as a preserved entity, skip
+            // everything including terrain sampling. This is where the Step 2 win lives.
+            long identityKey = ComputeIdentityKey(kingdom, inner2D, outer2D);
+            if (skipKeys != null && skipKeys.Contains(identityKey))
             {
-                // Show-on-water mode: AlwaysDepthTest (engine name: render_after_postfx)
-                // draws in a late pass that runs AFTER the water surface has been fully
-                // composited, so borders appear on top of water rather than beneath it.
-                borderMat.Flags |= MaterialFlags.AlwaysDepthTest;
+                return null;
+            }
+
+            var (innerPoints, innerSkip) = SampleTerrainHeightsWithWater(inner2D, heightOffset, hideWater);
+            var (outerPoints, outerSkip) = SampleTerrainHeightsWithWater(outer2D, heightOffset, hideWater);
+
+            int count = Math.Min(innerPoints.Count, outerPoints.Count);
+            if (count < 2)
+                return null;
+
+            // Compute AABB from the input 2D polylines before touching the mesh lock
+            float minX = float.MaxValue, minY = float.MaxValue;
+            float maxX = float.MinValue, maxY = float.MinValue;
+
+            for (int i = 0; i < inner2D.Count; i++)
+            {
+                var p = inner2D[i];
+                if (p.x < minX) minX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y > maxY) maxY = p.y;
+            }
+            for (int i = 0; i < outer2D.Count; i++)
+            {
+                var p = outer2D[i];
+                if (p.x < minX) minX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y > maxY) maxY = p.y;
             }
 
             Mesh mesh = Mesh.CreateMesh(editable: true);
@@ -83,54 +142,43 @@ namespace KingdomBorders
                 ModLog.Log("FAIL: Mesh.CreateMesh returned null");
                 return null;
             }
-            mesh.SetMaterial(borderMat);
+            mesh.SetMaterial(mat);
 
             UIntPtr lockHandle = mesh.LockEditDataWrite();
             int quadCount = 0;
 
             try
             {
-                foreach (var (inner2D, outer2D) in builder.Strips)
+                for (int i = 0; i < count - 1; i++)
                 {
-                    var (innerPoints, innerSkip) = SampleTerrainHeightsWithWater(inner2D, heightOffset, hideWater);
-                    var (outerPoints, outerSkip) = SampleTerrainHeightsWithWater(outer2D, heightOffset, hideWater);
-
-                    int count = Math.Min(innerPoints.Count, outerPoints.Count);
-                    if (count < 2)
-                        continue;
-
-                    for (int i = 0; i < count - 1; i++)
+                    if (innerSkip[i] && outerSkip[i] &&
+                        innerSkip[i + 1] && outerSkip[i + 1])
                     {
-                        // Skip quad if all four corners should be hidden
-                        if (innerSkip[i] && outerSkip[i] &&
-                            innerSkip[i + 1] && outerSkip[i + 1])
-                        {
-                            continue;
-                        }
-
-                        Vec3 innerA = innerPoints[i];
-                        Vec3 outerA = outerPoints[i];
-                        Vec3 innerB = innerPoints[i + 1];
-                        Vec3 outerB = outerPoints[i + 1];
-
-                        float uvY0 = (float)i / (count - 1);
-                        float uvY1 = (float)(i + 1) / (count - 1);
-
-                        Vec2 uv0 = new Vec2(0f, uvY0);
-                        Vec2 uv1 = new Vec2(1f, uvY0);
-                        Vec2 uv2 = new Vec2(1f, uvY1);
-                        Vec2 uv3 = new Vec2(0f, uvY1);
-
-                        // Front faces
-                        mesh.AddTriangle(innerA, outerA, outerB, uv0, uv1, uv2, builder.Color, lockHandle);
-                        mesh.AddTriangle(innerA, outerB, innerB, uv0, uv2, uv3, builder.Color, lockHandle);
-
-                        // Back faces
-                        mesh.AddTriangle(outerB, outerA, innerA, uv2, uv1, uv0, builder.Color, lockHandle);
-                        mesh.AddTriangle(innerB, outerB, innerA, uv3, uv2, uv0, builder.Color, lockHandle);
-
-                        quadCount++;
+                        continue;
                     }
+
+                    Vec3 innerA = innerPoints[i];
+                    Vec3 outerA = outerPoints[i];
+                    Vec3 innerB = innerPoints[i + 1];
+                    Vec3 outerB = outerPoints[i + 1];
+
+                    float uvY0 = (float)i / (count - 1);
+                    float uvY1 = (float)(i + 1) / (count - 1);
+
+                    Vec2 uv0 = new Vec2(0f, uvY0);
+                    Vec2 uv1 = new Vec2(1f, uvY0);
+                    Vec2 uv2 = new Vec2(1f, uvY1);
+                    Vec2 uv3 = new Vec2(0f, uvY1);
+
+                    // Front faces
+                    mesh.AddTriangle(innerA, outerA, outerB, uv0, uv1, uv2, color, lockHandle);
+                    mesh.AddTriangle(innerA, outerB, innerB, uv0, uv2, uv3, color, lockHandle);
+
+                    // Back faces
+                    mesh.AddTriangle(outerB, outerA, innerA, uv2, uv1, uv0, color, lockHandle);
+                    mesh.AddTriangle(innerB, outerB, innerA, uv3, uv2, uv0, color, lockHandle);
+
+                    quadCount++;
                 }
             }
             finally
@@ -160,15 +208,104 @@ namespace KingdomBorders
             _entries.Add(new BorderEntityEntry
             {
                 Entity = entity,
-                Kingdom = builder.Kingdom
+                Kingdom = kingdom,
+                MinX = minX,
+                MinY = minY,
+                MaxX = maxX,
+                MaxY = maxY,
+                IdentityKey = identityKey
             });
 
             return entity;
         }
 
         /// <summary>
+        /// Returns the cached shared material for the given water-hiding flag,
+        /// creating it on first use.
+        /// </summary>
+        private Material GetOrCreateMaterial(bool hideWater)
+        {
+            if (hideWater)
+            {
+                if (_matHideWater == null)
+                    _matHideWater = BuildMaterial(hideWater: true);
+                return _matHideWater;
+            }
+            else
+            {
+                if (_matShowWater == null)
+                    _matShowWater = BuildMaterial(hideWater: false);
+                return _matShowWater;
+            }
+        }
+
+        private static Material BuildMaterial(bool hideWater)
+        {
+            Material mat = Material.GetFromResource("vertex_color_mat");
+            if (mat == null)
+            {
+                ModLog.Log("FAIL: vertex_color_mat not found");
+                return null;
+            }
+
+            Material borderMat = mat.CreateCopy();
+            borderMat.Flags |= MaterialFlags.NoModifyDepthBuffer;
+
+            if (hideWater)
+            {
+                borderMat.Flags |= MaterialFlags.NoDepthTest;
+            }
+            else
+            {
+                borderMat.Flags |= MaterialFlags.AlwaysDepthTest;
+            }
+
+            return borderMat;
+        }
+
+        /// <summary>
+        /// Hashes kingdom identity together with quantized polyline endpoints so a rebuilt
+        /// strip whose endpoints haven't moved produces the same key as its previous incarnation.
+        /// </summary>
+        private static long ComputeIdentityKey(Kingdom kingdom, List<Vec2> inner, List<Vec2> outer)
+        {
+            unchecked
+            {
+                const ulong fnvOffset = 14695981039346656037UL;
+                const ulong fnvPrime = 1099511628211UL;
+                ulong h = fnvOffset;
+
+                int kid = kingdom != null ? kingdom.StringId.GetHashCode() : 0;
+                h = (h ^ (uint)kid) * fnvPrime;
+
+                if (inner.Count > 0)
+                {
+                    int last = inner.Count - 1;
+                    h = (h ^ (uint)Quantize(inner[0].x)) * fnvPrime;
+                    h = (h ^ (uint)Quantize(inner[0].y)) * fnvPrime;
+                    h = (h ^ (uint)Quantize(inner[last].x)) * fnvPrime;
+                    h = (h ^ (uint)Quantize(inner[last].y)) * fnvPrime;
+                }
+                if (outer.Count > 0)
+                {
+                    int last = outer.Count - 1;
+                    h = (h ^ (uint)Quantize(outer[0].x)) * fnvPrime;
+                    h = (h ^ (uint)Quantize(outer[0].y)) * fnvPrime;
+                    h = (h ^ (uint)Quantize(outer[last].x)) * fnvPrime;
+                    h = (h ^ (uint)Quantize(outer[last].y)) * fnvPrime;
+                }
+
+                return (long)h;
+            }
+        }
+
+        private static int Quantize(float v)
+        {
+            return (int)Math.Round(v * 100f);
+        }
+
+        /// <summary>
         /// Updates the alpha of all border entities based on camera distance.
-        /// Zoomed out (far) = more visible, zoomed in (close) = more transparent.
         /// </summary>
         public void UpdateAlphaForCameraDistance(float cameraDistance)
         {
@@ -176,7 +313,6 @@ namespace KingdomBorders
             float maxVisible = MCMSettings.Instance?.FullOpacityHeight ?? 200;
             const float maxAlpha = 0.7f;
 
-            // Ensure maxVisible is always above minVisible
             if (maxVisible <= minVisible)
                 maxVisible = minVisible + 1f;
 
@@ -195,13 +331,49 @@ namespace KingdomBorders
                 alpha = t * maxAlpha;
             }
 
-            foreach (var entry in _entries)
+            for (int i = 0; i < _entries.Count; i++)
             {
-                if (entry.Entity != null)
-                {
-                    entry.Entity.SetAlpha(alpha);
-                }
+                var entity = _entries[i].Entity;
+                if (entity != null)
+                    entity.SetAlpha(alpha);
             }
+        }
+
+        /// <summary>
+        /// Removes all entries belonging to any of the specified kingdoms whose strip AABB
+        /// intersects the given world-space bounding box. Entries OUTSIDE the box are left
+        /// in the scene and their identity keys are returned so the caller can skip
+        /// re-rendering the equivalent new strips.
+        /// </summary>
+        public HashSet<long> ClearForKingdomsInBounds(HashSet<Kingdom> kingdoms,
+            float minX, float minY, float maxX, float maxY)
+        {
+            var preservedKeys = new HashSet<long>();
+            int removed = 0;
+
+            _entries.RemoveAll(entry =>
+            {
+                if (!kingdoms.Contains(entry.Kingdom))
+                    return false;
+
+                bool disjoint = entry.MaxX < minX || entry.MinX > maxX ||
+                                entry.MaxY < minY || entry.MinY > maxY;
+
+                if (!disjoint)
+                {
+                    entry.Entity?.Remove(0);
+                    removed++;
+                    return true;
+                }
+
+                preservedKeys.Add(entry.IdentityKey);
+                return false;
+            });
+
+            ModLog.Log($"AABB cull: removed {removed} intersecting, preserved {preservedKeys.Count} outside " +
+                       $"(kingdoms={kingdoms.Count}, box=({minX:F1},{minY:F1})-({maxX:F1},{maxY:F1}))");
+
+            return preservedKeys;
         }
 
         /// <summary>
@@ -222,9 +394,6 @@ namespace KingdomBorders
             ModLog.Log($"Cleared {removed} border entities for {kingdoms.Count} kingdoms");
         }
 
-        /// <summary>
-        /// Removes all rendered border entities from the scene.
-        /// </summary>
         public void ClearAll()
         {
             foreach (var entry in _entries)
@@ -236,10 +405,6 @@ namespace KingdomBorders
 
         public int EntityCount => _entries.Count;
 
-        /// <summary>
-        /// Returns true if the given point is over any water surface
-        /// (sea, lake, river, or coastal water).
-        /// </summary>
         private bool IsWaterPoint(Vec2 p)
         {
             var mapSceneWrapper = Campaign.Current.MapSceneWrapper;
@@ -255,7 +420,6 @@ namespace KingdomBorders
                        terrain == TerrainType.Water;
             }
 
-            // Land face invalid — check sea-region face for water terrain types.
             var seaPos = new CampaignVec2(p, false);
             PathFaceRecord seaFace = mapSceneWrapper.GetFaceIndex(in seaPos);
 
@@ -271,11 +435,6 @@ namespace KingdomBorders
             return false;
         }
 
-        /// <summary>
-        /// Samples terrain heights and determines which points should be hidden
-        /// based on the water hiding setting. When showing on water, water points
-        /// are raised to the water surface level so they aren't hidden beneath it.
-        /// </summary>
         private (List<Vec3> points, List<bool> shouldHide) SampleTerrainHeightsWithWater(
             List<Vec2> points2D, float heightOffset, bool hideWater)
         {
@@ -284,7 +443,6 @@ namespace KingdomBorders
 
             var mapSceneWrapper = Campaign.Current.MapSceneWrapper;
 
-            // If hiding is off (show on water), sample water surface height for water points
             if (!hideWater)
             {
                 foreach (var p in points2D)
@@ -293,7 +451,6 @@ namespace KingdomBorders
                     var campaignPos = new CampaignVec2(p, false);
                     mapSceneWrapper.GetHeightAtPoint(in campaignPos, ref height);
 
-                    // Check if this point is over water and raise it to the water surface
                     if (IsWaterPoint(p))
                     {
                         float waterLevel = _scene.GetWaterLevelAtPosition(p, false, true);

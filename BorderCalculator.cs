@@ -110,6 +110,14 @@ namespace KingdomBorders
 
         // Exclave data: stored after DetectAndSeparateExclaves, used to generate extra border segments
         private List<ExclaveBlob> _exclaveBlobs;
+        // Bounds of the region rebuilt by the last partial grid update, in world-space.
+        // Used by the behavior's AABB-diff logic to preserve strips outside this region.
+        // Cleared at the start of a full grid build.
+        public bool HasLastRebuildBounds { get; private set; }
+        public float LastRebuildMinX { get; private set; }
+        public float LastRebuildMinY { get; private set; }
+        public float LastRebuildMaxX { get; private set; }
+        public float LastRebuildMaxY { get; private set; }
 
         public BorderCalculator(int resolution = 150)
         {
@@ -267,6 +275,7 @@ namespace KingdomBorders
             BuildSettlementCache();
             _gridBuildRow = 0;
             _gridBuildComplete = false;
+            HasLastRebuildBounds = false; // Full rebuild — no partial AABB applies.
         }
 
         /// <summary>
@@ -311,14 +320,12 @@ namespace KingdomBorders
             return false;
         }
 
-        /// <summary>
-        /// Rebuilds the entire grid. Refreshes the settlement cache first to pick up
-        /// ownership changes, then uses the same fast spatial lookup.
-        /// </summary>
         public bool RebuildTerritoryGridForKingdoms(HashSet<Kingdom> affectedKingdoms)
         {
             if (_territoryGrid == null)
                 return false;
+
+            HasLastRebuildBounds = false; // Whole-grid rebuild — no partial AABB applies.
 
             // Restore exclave-overwritten cells so the fresh DetectAndSeparateExclaves
             // pass at the end can re-discover all exclaves from clean grid data.
@@ -362,9 +369,13 @@ namespace KingdomBorders
         /// Rebuilds only the grid cells within a region around the changed settlements.
         /// Finds the max distance to the nearest neighboring settlement to determine
         /// how far the ownership change could ripple, then only re-evaluates that area.
+        /// Also publishes the expanded bounds as LastRebuildMinX/MaxX/MinY/MaxY so the
+        /// rendering layer can preserve strips outside this region.
         /// </summary>
         public bool RebuildTerritoryGridAroundSettlements(HashSet<Settlement> changedSettlements)
         {
+            HasLastRebuildBounds = false;
+
             if (_territoryGrid == null || changedSettlements == null || changedSettlements.Count == 0)
                 return false;
 
@@ -423,6 +434,13 @@ namespace KingdomBorders
             minY -= expand;
             maxY += expand;
 
+            // Publish the expanded bounds for the diff renderer.
+            LastRebuildMinX = minX;
+            LastRebuildMinY = minY;
+            LastRebuildMaxX = maxX;
+            LastRebuildMaxY = maxY;
+            HasLastRebuildBounds = true;
+
             // Convert to grid coordinates
             float mapW = _mapMax.x - _mapMin.x;
             float mapH = _mapMax.y - _mapMin.y;
@@ -463,7 +481,8 @@ namespace KingdomBorders
             _spatialBuckets = null; // Free memory
 
             int totalCells = _gridResolution * _gridResolution;
-            ModLog.Log($"Partial grid rebuild: {cellsUpdated}/{totalCells} cells ({100f * cellsUpdated / totalCells:F1}%)");
+            ModLog.Log($"Partial grid rebuild: {cellsUpdated}/{totalCells} cells ({100f * cellsUpdated / totalCells:F1}%), " +
+                       $"AABB=({minX:F1},{minY:F1})-({maxX:F1},{maxY:F1})");
 
             // Re-detect exclaves after partial rebuild
             DetectAndSeparateExclaves();
