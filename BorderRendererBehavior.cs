@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using SandBox;
+using SandBox.View.Map;
 using TaleWorlds.CampaignSystem;
 using TaleWorlds.CampaignSystem.Actions;
 using TaleWorlds.CampaignSystem.Settlements;
@@ -23,6 +24,10 @@ namespace KingdomBorders
     {
         private bool _isInitialized;
         private BorderCalculator _calculator;
+
+        // Deferred build: set by BeginBuildBorders(), consumed by ApplicationTick()
+        // once the map screen is actually active.
+        private bool _buildRequested;
 
         // State machine
         private BuildPhase _phase = BuildPhase.Idle;
@@ -119,6 +124,18 @@ namespace KingdomBorders
         /// </summary>
         public void ApplicationTick()
         {
+            // Deferred build: wait until the map screen is active before starting
+            // the pipeline. This avoids competing with the intro cinematic for
+            // frame time, preventing audio-visual desync and input lag on game start.
+            if (_buildRequested)
+            {
+                if (MapScreen.Instance == null)
+                    return; // Map not ready yet — skip all work this frame
+
+                _buildRequested = false;
+                StartBuildPipeline();
+            }
+
             switch (_phase)
             {
                 case BuildPhase.BuildingGrid:
@@ -582,11 +599,22 @@ namespace KingdomBorders
         private void BeginBuildBorders()
         {
             _isInitialized = true;
+            _buildRequested = true;
             ModLog.Clear();
-            ModLog.Log("=== Kingdom Border Renderer Starting ===");
+            ModLog.Log("=== Kingdom Border Renderer Starting (deferred until map screen) ===");
+        }
 
+        /// <summary>
+        /// Actually starts the build pipeline. Called from ApplicationTick() once
+        /// MapScreen.Instance is available, ensuring no work competes with the
+        /// intro cinematic or initial loading screens.
+        /// </summary>
+        private void StartBuildPipeline()
+        {
             try
             {
+                ModLog.Log("Map screen active — starting border build pipeline");
+
                 var mapScene = Campaign.Current?.MapSceneWrapper as MapScene;
                 if (mapScene == null)
                 {
@@ -1107,17 +1135,21 @@ namespace KingdomBorders
 
         public void Cleanup()
         {
-            if (Renderer != null)
-            {
-                ModLog.Log("Cleaning up border entities...");
-                Renderer.ClearAll();
-                Renderer = null;
-            }
+            Renderer?.ClearAll();
+            Renderer = null;
+            MapScene = null;
+            _calculator = null;
+            _pendingSegments = null;
+            _kingdomBuilders = null;
+            _pendingFlush = null;
             _cachedBuilders = null;
             _affectedKingdoms = null;
             _preservedStripKeys = null;
+            _junctions = null;
+            _junctionKeys = null;
             _pendingRegenSettlements = null;
             _pendingRegenKingdoms = null;
+            _buildRequested = false;
             _isInitialized = false;
             _phase = BuildPhase.Idle;
         }
