@@ -110,6 +110,7 @@ namespace KingdomBorders
 
         // Exclave data: stored after DetectAndSeparateExclaves, used to generate extra border segments
         private List<ExclaveBlob> _exclaveBlobs;
+        private List<KingdomBlob> _allBlobs;
 
         // Maps every blob cell key → that blob's OriginalKingdom.
         // Lets the main edge pass skip blob-perimeter edges (they are owned by the
@@ -548,6 +549,7 @@ namespace KingdomBorders
         private void DetectAndSeparateExclaves()
         {
             _exclaveBlobs = new List<ExclaveBlob>();
+            _allBlobs = new List<KingdomBlob>();
 
             // visited[x,y] tracks whether each cell has been flood-filled already
             bool[,] visited = new bool[_gridResolution, _gridResolution];
@@ -572,6 +574,7 @@ namespace KingdomBorders
                     // Flood fill this blob
                     var blob = FloodFill(x, y, kingdom, visited);
                     allBlobs.Add((kingdom, blob));
+                    _allBlobs.Add(new KingdomBlob { Kingdom = kingdom, Cells = blob });
                 }
             }
 
@@ -977,6 +980,12 @@ namespace KingdomBorders
             }
             return kingdoms;
         }
+
+        public IList<KingdomBlob> GetAllBlobs() => _allBlobs ?? (IList<KingdomBlob>)Array.Empty<KingdomBlob>();
+
+        public Vec2 MapMin => _mapMin;
+        public Vec2 MapMax => _mapMax;
+        public int GridResolution => _gridResolution;
 
         public List<BorderEdge> FindBorderEdges()
         {

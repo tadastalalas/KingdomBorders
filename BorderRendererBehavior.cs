@@ -15,6 +15,7 @@ namespace KingdomBorders
     {
         Idle,
         BuildingGrid,
+        BuildingFill,
         FindingEdges,
         ProcessingSegments,
         FlushingMeshes
@@ -24,6 +25,15 @@ namespace KingdomBorders
     {
         private bool _isInitialized;
         private BorderCalculator _calculator;
+
+        // ADD: fill rebuild state
+        private List<FillPolygon> _pendingFills;
+        private int _fillIndex;
+        private const int MaxFillsPerTick = 4;
+
+        // ADD: MCM snapshot for fill toggle/opacity (no rebuild needed when these change)
+        private bool _lastShowFill;
+        private float _lastFillOpacity;
 
         // Deferred build: set by BeginBuildBorders(), consumed by ApplicationTick()
         // once the map screen is actually active.
@@ -182,6 +192,10 @@ namespace KingdomBorders
                 case BuildPhase.Idle:
                     ProcessQueuedRegeneration();
                     break;
+
+                case BuildPhase.BuildingFill:
+                    BuildFillsIncremental();
+                    break;
             }
         }
 
@@ -243,6 +257,18 @@ namespace KingdomBorders
             float heightOffset = settings.HeightOffset;
             int cornerSmoothing = settings.CornerSmoothing;
 
+            // ADD: cheap toggles that never trigger a rebuild
+            if (settings.ShowTerritoryFill != _lastShowFill)
+            {
+                _lastShowFill = settings.ShowTerritoryFill;
+                Renderer?.ApplyFillVisibility();
+            }
+            if (Math.Abs(settings.FillOpacityFactor - _lastFillOpacity) > 0.001f)
+            {
+                _lastFillOpacity = settings.FillOpacityFactor;
+                // alpha picks the new factor up automatically next frame
+            }
+
             if (showOnWater != _lastShowOnWater ||
                 Math.Abs(borderWidth - _lastBorderWidth) > 0.001f ||
                 Math.Abs(borderGap - _lastBorderGap) > 0.001f ||
@@ -266,6 +292,8 @@ namespace KingdomBorders
             _lastBorderGap = settings.BorderGap;
             _lastHeightOffset = settings.HeightOffset;
             _lastCornerSmoothing = settings.CornerSmoothing;
+            _lastShowFill = settings.ShowTerritoryFill;
+            _lastFillOpacity = settings.FillOpacityFactor;
         }
 
         /// <summary>
@@ -1161,8 +1189,101 @@ namespace KingdomBorders
 
                 DiagLogIfRebuildComplete();
 
+                StartFillBuildPhase();
+            }
+        }
+
+        /// <summary>
+        /// Kicks off the fill-build phase. Builds fill polygons for affected kingdoms
+        /// (or all kingdoms during a full rebuild), then incrementally renders them.
+        /// </summary>
+        private void StartFillBuildPhase()
+        {
+            try
+            {
+                if (_calculator == null || Renderer == null)
+                {
+                    DiagLogIfRebuildComplete();
+                    _phase = BuildPhase.Idle;
+                    return;
+                }
+
+                var allBlobs = _calculator.GetAllBlobs();
+                List<KingdomBlob> blobs;
+
+                if (_affectedKingdoms == null)
+                {
+                    // Full rebuild
+                    Renderer.ClearAllFills();
+                    blobs = new List<KingdomBlob>(allBlobs);
+                }
+                else
+                {
+                    Renderer.ClearFillsForKingdoms(_affectedKingdoms);
+                    blobs = new List<KingdomBlob>();
+                    foreach (var b in allBlobs)
+                    {
+                        if (b.Kingdom != null && _affectedKingdoms.Contains(b.Kingdom))
+                            blobs.Add(b);
+                    }
+                }
+
+                if (blobs.Count == 0)
+                {
+                    DiagLogIfRebuildComplete();
+                    _phase = BuildPhase.Idle;
+                    return;
+                }
+
+                int chaikin = MCMSettings.Instance?.CornerSmoothing ?? 3;
+                _pendingFills = TerritoryFillBuilder.BuildFills(
+                    blobs, _calculator.MapMin, _calculator.MapMax,
+                    _calculator.GridResolution, chaikin);
+                _fillIndex = 0;
+
+                ModLog.Log($"Built {_pendingFills.Count} fill polygons for {blobs.Count} blobs");
+                _phase = BuildPhase.BuildingFill;
+            }
+            catch (Exception ex)
+            {
+                ModLog.Log($"FILL BUILD EXCEPTION: {ex.Message}");
+                DiagLogIfRebuildComplete();
                 _phase = BuildPhase.Idle;
             }
+        }
+
+        private void BuildFillsIncremental()
+        {
+            if (_pendingFills == null || _fillIndex >= _pendingFills.Count)
+            {
+                _pendingFills = null;
+                ModLog.Log($"Fill flush complete. Total fill entities: {Renderer?.FillEntityCount ?? 0}");
+                DiagLogIfRebuildComplete();
+                _phase = BuildPhase.Idle;
+                return;
+            }
+
+            // Draw fills slightly LOWER than borders so borders sit cleanly on top.
+            // Exclaves get a tiny additional bump per-fill below to avoid z-fight with mainland.
+            float baseHeight = (MCMSettings.Instance?.HeightOffset ?? 0.55f) - 0.05f;
+
+            int end = Math.Min(_fillIndex + MaxFillsPerTick, _pendingFills.Count);
+            var slice = new List<FillPolygon>(end - _fillIndex);
+            for (int i = _fillIndex; i < end; i++)
+                slice.Add(_pendingFills[i]);
+
+            Renderer.RenderKingdomFills(slice, baseHeight);
+            _fillIndex = end;
+        }
+
+        /// <summary>
+        /// Public hook for the M-key hotkey in SubModule.
+        /// </summary>
+        public void ToggleFillVisibility()
+        {
+            if (Renderer == null) return;
+            Renderer.SetFillUserHidden(!Renderer.IsFillUserHidden);
+            ModLog.Log($"Fill toggled by hotkey → hidden={Renderer.IsFillUserHidden}");
         }
 
         public void Cleanup()
@@ -1184,6 +1305,7 @@ namespace KingdomBorders
             _buildRequested = false;
             _isInitialized = false;
             _phase = BuildPhase.Idle;
+            _pendingFills = null;
         }
 
         private void DiagBeginRebuild()
