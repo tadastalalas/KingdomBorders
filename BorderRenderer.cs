@@ -44,12 +44,6 @@ namespace KingdomBorders
     {
         private readonly Scene _scene;
         private readonly List<BorderEntityEntry> _entries = new List<BorderEntityEntry>();
-        // ADD: separate entry list for fill polygons so they can be cleared/visibility-toggled
-        // independently of the border strips.
-        private readonly List<BorderEntityEntry> _fillEntries = new List<BorderEntityEntry>();
-
-        // ADD: live visibility flag toggled by the M key. Effective visibility = MCM ShowTerritoryFill && !_userHidFill.
-        private bool _userHidFill;
 
         // Cached materials — one per hideWater flag value. The flag is stable across
         // a build (MCM changes trigger a full rebuild) and the material itself is
@@ -329,18 +323,6 @@ namespace KingdomBorders
                 var entity = _entries[i].Entity;
                 if (entity != null) entity.SetAlpha(alpha);
             }
-
-            // ADD: fill alpha = border alpha * MCM factor (always slightly less than borders)
-            float fillFactor = MCMSettings.Instance?.FillOpacityFactor ?? 0.6f;
-            if (fillFactor < 0f) fillFactor = 0f;
-            else if (fillFactor > 1f) fillFactor = 1f;
-            float fillAlpha = alpha * fillFactor;
-
-            for (int i = 0; i < _fillEntries.Count; i++)
-            {
-                var entity = _fillEntries[i].Entity;
-                if (entity != null) entity.SetAlpha(fillAlpha);
-            }
         }
 
         /// <summary>
@@ -402,7 +384,6 @@ namespace KingdomBorders
         {
             foreach (var entry in _entries) entry.Entity?.Remove(0);
             _entries.Clear();
-            ClearAllFills();
         }
 
         public int EntityCount => _entries.Count;
@@ -478,161 +459,6 @@ namespace KingdomBorders
             }
 
             return (points3D, hideFlags);
-        }
-
-        /// <summary>
-        /// Renders one filled polygon mesh per FillPolygon. Skips nothing; caller is
-        /// expected to have cleared previous fills for affected kingdoms first.
-        /// </summary>
-        public int RenderKingdomFills(IList<FillPolygon> fills, float heightOffset)
-        {
-            if (fills == null || fills.Count == 0)
-                return 0;
-
-            bool showOnWater = MCMSettings.Instance?.ShowBordersOnWater ?? false;
-            bool hideWater = !showOnWater;
-
-            Material mat = GetOrCreateMaterial(hideWater);
-            if (mat == null)
-                return 0;
-
-            int created = 0;
-            for (int i = 0; i < fills.Count; i++)
-            {
-                if (CreateFillEntity(fills[i], mat, heightOffset, hideWater) != null)
-                    created++;
-            }
-            return created;
-        }
-
-        private GameEntity CreateFillEntity(FillPolygon fill, Material mat, float heightOffset, bool hideWater)
-        {
-            if (fill.SmoothedPerimeter.Count < 3 || fill.Triangles.Count < 3)
-                return null;
-
-            var (verts3D, hideFlags) = SampleTerrainHeightsWithWater(fill.SmoothedPerimeter, heightOffset, hideWater);
-
-            // AABB
-            float minX = float.MaxValue, minY = float.MaxValue;
-            float maxX = float.MinValue, maxY = float.MinValue;
-            for (int i = 0; i < fill.SmoothedPerimeter.Count; i++)
-            {
-                var p = fill.SmoothedPerimeter[i];
-                if (p.x < minX) minX = p.x;
-                if (p.y < minY) minY = p.y;
-                if (p.x > maxX) maxX = p.x;
-                if (p.y > maxY) maxY = p.y;
-            }
-
-            Mesh mesh = Mesh.CreateMesh(editable: true);
-            if (mesh == null) return null;
-            mesh.SetMaterial(mat);
-
-            UIntPtr lockHandle = mesh.LockEditDataWrite();
-            int triCount = 0;
-            try
-            {
-                for (int i = 0; i < fill.Triangles.Count; i += 3)
-                {
-                    int a = fill.Triangles[i];
-                    int b = fill.Triangles[i + 1];
-                    int c = fill.Triangles[i + 2];
-
-                    // Skip triangles whose every vertex is hidden (water).
-                    if (hideFlags[a] && hideFlags[b] && hideFlags[c])
-                        continue;
-
-                    Vec3 va = verts3D[a];
-                    Vec3 vb = verts3D[b];
-                    Vec3 vc = verts3D[c];
-
-                    Vec2 uv = Vec2.Zero;
-                    // Front
-                    mesh.AddTriangle(va, vb, vc, uv, uv, uv, fill.Color, lockHandle);
-                    // Back (so the fill is visible regardless of triangulation winding from camera)
-                    mesh.AddTriangle(vc, vb, va, uv, uv, uv, fill.Color, lockHandle);
-                    triCount++;
-                }
-            }
-            finally { mesh.UnlockEditDataWrite(lockHandle); }
-
-            if (triCount == 0) return null;
-
-            mesh.ComputeNormals();
-            mesh.RecomputeBoundingBox();
-
-            GameEntity entity = GameEntity.CreateEmpty(_scene, isModifiableFromEditor: false);
-            if (entity == null) return null;
-
-            MatrixFrame identityFrame = MatrixFrame.Identity;
-            entity.SetGlobalFrame(in identityFrame);
-            entity.AddMesh(mesh);
-
-            // Initial visibility honors MCM + hotkey state
-            bool mcmVisible = MCMSettings.Instance?.ShowTerritoryFill ?? true;
-            entity.SetVisibilityExcludeParents(mcmVisible && !_userHidFill);
-            entity.SetReadyToRender(true);
-
-            _fillEntries.Add(new BorderEntityEntry
-            {
-                Entity = entity,
-                Kingdom = fill.Kingdom,
-                MinX = minX,
-                MinY = minY,
-                MaxX = maxX,
-                MaxY = maxY,
-                IdentityKey = 0
-            });
-
-            return entity;
-        }
-
-        public void ClearAllFills()
-        {
-            for (int i = 0; i < _fillEntries.Count; i++)
-                _fillEntries[i].Entity?.Remove(0);
-            _fillEntries.Clear();
-        }
-
-        public void ClearFillsForKingdoms(HashSet<Kingdom> kingdoms)
-        {
-            int removed = _fillEntries.RemoveAll(e =>
-            {
-                if (kingdoms.Contains(e.Kingdom))
-                {
-                    e.Entity?.Remove(0);
-                    return true;
-                }
-                return false;
-            });
-            ModLog.Log($"Cleared {removed} fill entities for {kingdoms.Count} kingdoms");
-        }
-
-        public int FillEntityCount => _fillEntries.Count;
-
-        /// <summary>
-        /// Toggle live visibility of the fill (M key). Does NOT touch MCM.
-        /// </summary>
-        public void SetFillUserHidden(bool hidden)
-        {
-            _userHidFill = hidden;
-            ApplyFillVisibility();
-        }
-
-        public bool IsFillUserHidden => _userHidFill;
-
-        /// <summary>
-        /// Recomputes effective fill visibility from MCM + hotkey state and applies it.
-        /// </summary>
-        public void ApplyFillVisibility()
-        {
-            bool mcmVisible = MCMSettings.Instance?.ShowTerritoryFill ?? true;
-            bool visible = mcmVisible && !_userHidFill;
-            for (int i = 0; i < _fillEntries.Count; i++)
-            {
-                var e = _fillEntries[i].Entity;
-                if (e != null) e.SetVisibilityExcludeParents(visible);
-            }
         }
     }
 }
