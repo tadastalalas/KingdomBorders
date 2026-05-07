@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Collections.Generic;
 using System.Linq;
 using SandBox;
@@ -32,6 +32,16 @@ namespace KingdomBorders
         // State machine
         private BuildPhase _phase = BuildPhase.Idle;
 
+        // === Phase 0 diagnostics: per-rebuild timing ===
+        // Drives one Stopwatch reused across all phases of a single rebuild.
+        // Totals are logged when the rebuild transitions back to Idle.
+        private readonly System.Diagnostics.Stopwatch _diagSw = new System.Diagnostics.Stopwatch();
+        private long _diagGridMs;
+        private long _diagEdgeChainMs;
+        private long _diagSegmentMs;
+        private long _diagFlushMs;
+        private bool _diagInRebuild;
+
         // Incremental generation state
         private List<BorderSegment> _pendingSegments;
         private int _pendingIndex;
@@ -48,7 +58,7 @@ namespace KingdomBorders
         private int _flushIndex;
         private const int MaxFlushStripsPerTick = 30;
 
-        // Queued regeneration — accumulated while builds may be in progress
+        // Queued regeneration â€” accumulated while builds may be in progress
         private HashSet<Settlement> _pendingRegenSettlements;
 
         // Explicitly tracked kingdoms that must be rebuilt (captured directly from events,
@@ -130,7 +140,7 @@ namespace KingdomBorders
             if (_buildRequested)
             {
                 if (MapScreen.Instance == null)
-                    return; // Map not ready yet — skip all work this frame
+                    return; // Map not ready yet â€” skip all work this frame
 
                 _buildRequested = false;
                 StartBuildPipeline();
@@ -139,22 +149,34 @@ namespace KingdomBorders
             switch (_phase)
             {
                 case BuildPhase.BuildingGrid:
+                    _diagSw.Restart();
                     if (_calculator.BuildTerritoryGridIncremental(GridRowsPerTick))
                     {
                         _phase = BuildPhase.FindingEdges;
                     }
+                    _diagSw.Stop();
+                    _diagGridMs += _diagSw.ElapsedMilliseconds;
                     break;
 
                 case BuildPhase.FindingEdges:
+                    _diagSw.Restart();
                     FindEdgesAndChain();
+                    _diagSw.Stop();
+                    _diagEdgeChainMs += _diagSw.ElapsedMilliseconds;
                     break;
 
                 case BuildPhase.ProcessingSegments:
+                    _diagSw.Restart();
                     ProcessPendingSegments();
+                    _diagSw.Stop();
+                    _diagSegmentMs += _diagSw.ElapsedMilliseconds;
                     break;
 
                 case BuildPhase.FlushingMeshes:
+                    _diagSw.Restart();
                     FlushKingdomMeshesIncremental();
+                    _diagSw.Stop();
+                    _diagFlushMs += _diagSw.ElapsedMilliseconds;
                     break;
 
                 case BuildPhase.Idle:
@@ -227,7 +249,7 @@ namespace KingdomBorders
                 Math.Abs(heightOffset - _lastHeightOffset) > 0.001f ||
                 cornerSmoothing != _lastCornerSmoothing)
             {
-                ModLog.Log($"MCM settings changed — triggering full rebuild");
+                ModLog.Log($"MCM settings changed â€” triggering full rebuild");
                 SnapshotMCMSettings();
                 FullRebuild();
             }
@@ -253,6 +275,8 @@ namespace KingdomBorders
         {
             if (Renderer == null)
                 return;
+
+            DiagBeginRebuild();
 
             Renderer.ClearAll();
             _cachedBuilders = null;
@@ -298,7 +322,7 @@ namespace KingdomBorders
             var oldKingdom = oldOwner?.Clan?.Kingdom;
             var newKingdom = newOwner?.Clan?.Kingdom;
 
-            // Skip if neither side belongs to a kingdom — no visible borders affected
+            // Skip if neither side belongs to a kingdom â€” no visible borders affected
             if (oldKingdom == null && newKingdom == null)
                 return;
 
@@ -308,10 +332,10 @@ namespace KingdomBorders
             if (oldKingdom != null && newKingdom != null && oldKingdom == newKingdom)
                 return;
 
-            // Skip villages — their bound town/castle changing hands already covers them,
+            // Skip villages â€” their bound town/castle changing hands already covers them,
             // and we add bound villages explicitly below when tracking a town/castle.
             // Verified against BLSource: ChangeOwnerOfSettlementAction.ApplyInternal fires
-            // a single OnSettlementOwnerChanged for the target settlement only — bound
+            // a single OnSettlementOwnerChanged for the target settlement only â€” bound
             // villages get SetVisualAsDirty() but no event, so we must re-add them here.
             if (settlement.IsVillage)
                 return;
@@ -424,7 +448,7 @@ namespace KingdomBorders
             QueueAffectedKingdom(newKingdom);
 
             _regenRequested = true;
-            ModLog.Log($"Clan {clan.Name} changed kingdom ({detail}) with {fiefCount} fiefs — queued regen");
+            ModLog.Log($"Clan {clan.Name} changed kingdom ({detail}) with {fiefCount} fiefs â€” queued regen");
         }
 
         /// <summary>
@@ -439,9 +463,11 @@ namespace KingdomBorders
             if (Renderer == null || _calculator == null)
                 return;
 
+            DiagBeginRebuild();
+
             if (_cachedBuilders == null)
             {
-                ModLog.Log("No cached builders — falling back to full rebuild");
+                ModLog.Log("No cached builders â€” falling back to full rebuild");
                 FullRebuild();
                 return;
             }
@@ -466,8 +492,11 @@ namespace KingdomBorders
             // in Voronoi terms) without any scene mutation or segment processing.
             if (!gridChanged)
             {
-                ModLog.Log("Grid unchanged after partial rebuild — skipping regen");
+                ModLog.Log("Grid unchanged after partial rebuild â€” skipping regen");
                 _preservedStripKeys = null;
+
+                DiagLogIfRebuildComplete();
+
                 _phase = BuildPhase.Idle;
                 return;
             }
@@ -508,6 +537,9 @@ namespace KingdomBorders
                 Renderer.ClearAll();
                 _cachedBuilders.Clear();
                 _preservedStripKeys = null;
+
+                DiagLogIfRebuildComplete();
+
                 _phase = BuildPhase.Idle;
                 return;
             }
@@ -574,7 +606,7 @@ namespace KingdomBorders
             else
             {
                 // No partial AABB (e.g. kingdoms-only queue fell back to full grid rebuild).
-                // Fall back to whole-kingdom clear — identical to pre-Step-2 behavior.
+                // Fall back to whole-kingdom clear â€” identical to pre-Step-2 behavior.
                 Renderer.ClearForKingdoms(_affectedKingdoms);
                 _preservedStripKeys = null;
             }
@@ -613,7 +645,7 @@ namespace KingdomBorders
         {
             try
             {
-                ModLog.Log("Map screen active — starting border build pipeline");
+                ModLog.Log("Map screen active â€” starting border build pipeline");
 
                 var mapScene = Campaign.Current?.MapSceneWrapper as MapScene;
                 if (mapScene == null)
@@ -667,7 +699,10 @@ namespace KingdomBorders
 
             if (edges.Count == 0)
             {
-                ModLog.Log("No border edges found — nothing to render");
+                ModLog.Log("No border edges found â€” nothing to render");
+
+                DiagLogIfRebuildComplete();
+
                 _phase = BuildPhase.Idle;
                 return;
             }
@@ -710,7 +745,7 @@ namespace KingdomBorders
         private bool ShouldProcessSegment(BorderSegment segment)
         {
             if (_affectedKingdoms == null)
-                return true; // Full rebuild — process everything
+                return true; // Full rebuild â€” process everything
 
             // Closed-loop (exclave) segments: the surrounding kingdom can legitimately be null
             // when the exclave borders kingdomless territory. Trust ExclaveKingdom in that case
@@ -730,13 +765,13 @@ namespace KingdomBorders
         /// <summary>
         /// Returns true if the given kingdom should have its strip geometry rebuilt.
         /// During a full rebuild, all kingdoms are rebuilt. During a partial rebuild,
-        /// only affected kingdoms get new strips — unaffected kingdoms retain their
+        /// only affected kingdoms get new strips â€” unaffected kingdoms retain their
         /// existing cached mesh entities in the scene.
         /// </summary>
         private bool IsKingdomAffected(Kingdom kingdom)
         {
             if (_affectedKingdoms == null)
-                return true; // Full rebuild — all kingdoms are affected
+                return true; // Full rebuild â€” all kingdoms are affected
 
             return _affectedKingdoms.Contains(kingdom);
         }
@@ -881,8 +916,17 @@ namespace KingdomBorders
         /// <summary>
         /// Processes a closed-loop exclave segment. Uses closed-loop smoothing and
         /// closed-loop offset so all corners are smooth with no gap at the seam.
-        /// Only draws the exclave kingdom's strip — the surrounding kingdom's strip
-        /// is suppressed because the main border already covers that area.
+        ///
+        /// Always draws BOTH sides of the loop (same as open segments). The earlier
+        /// "exclave kingdom only" optimization was incorrect: after exclave detection
+        /// rewrites the grid, the surrounding kingdom's main border traces only the
+        /// outer extent of its territory and does NOT cover the exclave hole inside
+        /// it â€” so the closed loop is the only place that boundary is drawn. Drawing
+        /// just one side produced a single floating strip that visually overlapped
+        /// nearby strips. Both sides â†’ consistent double border everywhere.
+        ///
+        /// Partial-rebuild gating (IsKingdomAffected) is kept per side so we don't
+        /// re-render strips for kingdoms outside the affected set.
         /// </summary>
         private void ProcessClosedLoopSegment(BorderSegment segment, float innerOffset, float outerOffset, int cornerSmoothing)
         {
@@ -894,7 +938,7 @@ namespace KingdomBorders
                 return;
             }
 
-            // No trimming for closed loops — they have no endpoints
+            // No trimming for closed loops â€” they have no endpoints
 
             var (leftKingdom, rightKingdom) = _calculator.DetermineKingdomSides(
                 smoothed, segment.KingdomA, segment.KingdomB);
@@ -911,37 +955,16 @@ namespace KingdomBorders
             rightLineInner.Add(rightLineInner[0]);
             rightLineOuter.Add(rightLineOuter[0]);
 
-            // Determine which side the exclave kingdom is on.
-            // Only draw the exclave kingdom's strip to avoid overlap with the main border.
-            Kingdom exclaveKingdom = segment.ExclaveKingdom;
-
-            if (exclaveKingdom != null)
+            // Always draw both sides (subject to null and partial-rebuild gating).
+            if (leftKingdom != null && IsKingdomAffected(leftKingdom))
             {
-                // Only draw the exclave kingdom's border strip, and only if it's affected
-                if (leftKingdom == exclaveKingdom && IsKingdomAffected(leftKingdom))
-                {
-                    GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
-                    _renderedCount++;
-                }
-                else if (rightKingdom == exclaveKingdom && IsKingdomAffected(rightKingdom))
-                {
-                    GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
-                    _renderedCount++;
-                }
+                GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
+                _renderedCount++;
             }
-            else
+            if (rightKingdom != null && IsKingdomAffected(rightKingdom))
             {
-                // Fallback: draw both sides (shouldn't normally happen for exclaves)
-                if (leftKingdom != null && IsKingdomAffected(leftKingdom))
-                {
-                    GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
-                    _renderedCount++;
-                }
-                if (rightKingdom != null && IsKingdomAffected(rightKingdom))
-                {
-                    GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
-                    _renderedCount++;
-                }
+                GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
+                _renderedCount++;
             }
         }
 
@@ -1109,6 +1132,12 @@ namespace KingdomBorders
                 if (_cachedBuilders == null)
                     _cachedBuilders = new Dictionary<Kingdom, KingdomMeshBuilder>();
 
+                // NOTE (A2): After a partial AABB rebuild, the builder's .Strips list contains
+                // ONLY the strips inside the AABB. Strips outside the AABB are still in the scene
+                // as preserved entities, but are NOT represented here. This is intentional â€” only
+                // _cachedBuilders.Keys is read elsewhere to track which kingdoms have ever been
+                // rendered. Do NOT iterate _cachedBuilders[K].Strips to recover scene state;
+                // it does not reflect the full set of live strips.
                 foreach (var builder in _pendingFlush)
                 {
                     _cachedBuilders[builder.Kingdom] = builder;
@@ -1129,6 +1158,9 @@ namespace KingdomBorders
                 _pendingFlush = null;
                 _affectedKingdoms = null;
                 _preservedStripKeys = null;
+
+                DiagLogIfRebuildComplete();
+
                 _phase = BuildPhase.Idle;
             }
         }
@@ -1152,6 +1184,21 @@ namespace KingdomBorders
             _buildRequested = false;
             _isInitialized = false;
             _phase = BuildPhase.Idle;
+        }
+
+        private void DiagBeginRebuild()
+        {
+            _diagGridMs = _diagEdgeChainMs = _diagSegmentMs = _diagFlushMs = 0;
+            _diagInRebuild = true;
+        }
+
+        private void DiagLogIfRebuildComplete()
+        {
+            if (!_diagInRebuild) return;
+            _diagInRebuild = false;
+            long total = _diagGridMs + _diagEdgeChainMs + _diagSegmentMs + _diagFlushMs;
+            ModLog.Log($"[PERF] Rebuild totals: grid={_diagGridMs}ms, edges+chain={_diagEdgeChainMs}ms, " +
+                       $"segments={_diagSegmentMs}ms, flush={_diagFlushMs}ms, total={total}ms");
         }
     }
 }

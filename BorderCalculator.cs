@@ -110,6 +110,13 @@ namespace KingdomBorders
 
         // Exclave data: stored after DetectAndSeparateExclaves, used to generate extra border segments
         private List<ExclaveBlob> _exclaveBlobs;
+
+        // Maps every blob cell key → that blob's OriginalKingdom.
+        // Lets the main edge pass skip blob-perimeter edges (they are owned by the
+        // exclave pass, which knows the true neighbour kingdom) and lets the exclave
+        // pass resolve a neighbour cell that happens to belong to another blob.
+        private Dictionary<long, Kingdom> _blobCellMap;
+
         // Bounds of the region rebuilt by the last partial grid update, in world-space.
         // Used by the behavior's AABB-diff logic to preserve strips outside this region.
         // Cleared at the start of a full grid build.
@@ -399,13 +406,21 @@ namespace KingdomBorders
                 if (pos.y > maxY) maxY = pos.y;
             }
 
-            // Expand by the max distance to the nearest neighbor of any changed settlement.
-            // This is the furthest a Voronoi boundary could shift.
+            // Expand the changed-settlement AABB by an upper bound on the Voronoi cell radius.
+            // Using only the *nearest* neighbor distance undershoots in sparse map regions
+            // (e.g. desert / steppe edges), where a settlement's Voronoi cell extends much
+            // farther than its closest neighbor. We instead take the K-nearest neighbors
+            // and use the MAX of those distances — this conservatively bounds the cell radius
+            // in practice without computing the full Voronoi adjacency.
+            const int K = 6;
+            float[] kBestSq = new float[K];
+
             float maxNeighborDist = 0f;
             foreach (var s in changedSettlements)
             {
                 Vec2 pos = s.Position.ToVec2();
-                float nearestDist = float.MaxValue;
+                for (int k = 0; k < K; k++)
+                    kBestSq[k] = float.MaxValue;
 
                 for (int i = 0; i < _settlementCache.Length; i++)
                 {
@@ -414,14 +429,44 @@ namespace KingdomBorders
                     float dy = pos.y - entry.Y;
                     float distSq = dx * dx + dy * dy;
 
-                    // Skip self (distance ~0)
-                    if (distSq > 0.1f && distSq < nearestDist)
-                        nearestDist = distSq;
+                    // Skip self
+                    if (distSq < 0.1f)
+                        continue;
+
+                    // Insertion into a small ascending top-K array
+                    if (distSq < kBestSq[K - 1])
+                    {
+                        int k = K - 1;
+                        while (k > 0 && kBestSq[k - 1] > distSq)
+                        {
+                            kBestSq[k] = kBestSq[k - 1];
+                            k--;
+                        }
+                        kBestSq[k] = distSq;
+                    }
                 }
 
-                if (nearestDist < float.MaxValue)
+                // The K-th nearest distance is a safe overestimate of the Voronoi cell radius
+                // for typical settlement layouts. If fewer than K other settlements exist
+                // (tiny scenarios), the slot stays MaxValue and we just fall back to whatever
+                // smaller K we actually populated.
+                float worstSq = kBestSq[K - 1];
+                if (worstSq >= float.MaxValue)
                 {
-                    float dist = (float)Math.Sqrt(nearestDist);
+                    // Walk back to the largest populated entry
+                    for (int k = K - 2; k >= 0; k--)
+                    {
+                        if (kBestSq[k] < float.MaxValue)
+                        {
+                            worstSq = kBestSq[k];
+                            break;
+                        }
+                    }
+                }
+
+                if (worstSq < float.MaxValue)
+                {
+                    float dist = (float)Math.Sqrt(worstSq);
                     if (dist > maxNeighborDist)
                         maxNeighborDist = dist;
                 }
@@ -596,6 +641,8 @@ namespace KingdomBorders
                 }
             }
 
+            RebuildBlobCellMap();
+
             if (totalExclaves > 0)
             {
                 ModLog.Log($"Exclave fix: found {totalExclaves} exclaves, replaced {totalCellsReplaced} grid cells");
@@ -700,8 +747,11 @@ namespace KingdomBorders
 
         /// <summary>
         /// Generates border edges for all exclaves. These edges represent the boundary
-        /// between the exclave's original kingdom and the surrounding kingdom, traced
-        /// from the stored blob cells against the (now-modified) grid.
+        /// between the exclave's original kingdom and whichever kingdom is actually on
+        /// the other side of each cell — looked up from _blobCellMap (for cells of
+        /// other blobs) or from the territory grid otherwise. Map-edge implicit edges
+        /// fall back to the blob's stored SurroundingKingdom because there is no
+        /// neighbour cell to consult.
         /// </summary>
         public List<BorderEdge> FindExclaveBorderEdges()
         {
@@ -712,67 +762,95 @@ namespace KingdomBorders
 
             foreach (var blob in _exclaveBlobs)
             {
-                // Build a set for fast lookup of blob cells
                 var cellSet = new HashSet<long>(blob.Cells.Count);
                 foreach (var (x, y) in blob.Cells)
-                {
-                    cellSet.Add((long)x << 32 | (uint)y);
-                }
+                    cellSet.Add(((long)x << 32) | (uint)y);
 
-                // For each cell in the blob, check its 4 neighbors.
-                // If a neighbor is NOT in the blob, there's a border edge between them.
                 foreach (var (cx, cy) in blob.Cells)
                 {
-                    // Check right neighbor
-                    if (cx + 1 < _gridResolution && !cellSet.Contains((long)(cx + 1) << 32 | (uint)cy))
+                    long curKey = ((long)cx << 32) | (uint)cy;
+
+                    // Right neighbour
+                    if (cx + 1 < _gridResolution && !cellSet.Contains(((long)(cx + 1) << 32) | (uint)cy))
                     {
-                        edges.Add(new BorderEdge
+                        long nKey = ((long)(cx + 1) << 32) | (uint)cy;
+                        if (!IsNeighbourInOtherBlobAndOwnedByThem(curKey, nKey))
                         {
-                            Start = GridToWorld(cx + 1, cy),
-                            End = GridToWorld(cx + 1, cy + 1),
-                            KingdomA = blob.OriginalKingdom,
-                            KingdomB = blob.SurroundingKingdom
-                        });
+                            Kingdom neighbour = ResolveTrueKingdom(cx + 1, cy);
+                            if (neighbour != blob.OriginalKingdom)
+                            {
+                                edges.Add(new BorderEdge
+                                {
+                                    Start = GridToWorld(cx + 1, cy),
+                                    End = GridToWorld(cx + 1, cy + 1),
+                                    KingdomA = blob.OriginalKingdom,
+                                    KingdomB = neighbour
+                                });
+                            }
+                        }
                     }
 
-                    // Check left neighbor
-                    if (cx - 1 >= 0 && !cellSet.Contains((long)(cx - 1) << 32 | (uint)cy))
+                    // Left neighbour
+                    if (cx - 1 >= 0 && !cellSet.Contains(((long)(cx - 1) << 32) | (uint)cy))
                     {
-                        edges.Add(new BorderEdge
+                        long nKey = ((long)(cx - 1) << 32) | (uint)cy;
+                        if (!IsNeighbourInOtherBlobAndOwnedByThem(curKey, nKey))
                         {
-                            Start = GridToWorld(cx, cy),
-                            End = GridToWorld(cx, cy + 1),
-                            KingdomA = blob.SurroundingKingdom,
-                            KingdomB = blob.OriginalKingdom
-                        });
+                            Kingdom neighbour = ResolveTrueKingdom(cx - 1, cy);
+                            if (neighbour != blob.OriginalKingdom)
+                            {
+                                edges.Add(new BorderEdge
+                                {
+                                    Start = GridToWorld(cx, cy),
+                                    End = GridToWorld(cx, cy + 1),
+                                    KingdomA = neighbour,
+                                    KingdomB = blob.OriginalKingdom
+                                });
+                            }
+                        }
                     }
 
-                    // Check top neighbor
-                    if (cy + 1 < _gridResolution && !cellSet.Contains((long)cx << 32 | (uint)(cy + 1)))
+                    // Top neighbour
+                    if (cy + 1 < _gridResolution && !cellSet.Contains(((long)cx << 32) | (uint)(cy + 1)))
                     {
-                        edges.Add(new BorderEdge
+                        long nKey = ((long)cx << 32) | (uint)(cy + 1);
+                        if (!IsNeighbourInOtherBlobAndOwnedByThem(curKey, nKey))
                         {
-                            Start = GridToWorld(cx, cy + 1),
-                            End = GridToWorld(cx + 1, cy + 1),
-                            KingdomA = blob.OriginalKingdom,
-                            KingdomB = blob.SurroundingKingdom
-                        });
+                            Kingdom neighbour = ResolveTrueKingdom(cx, cy + 1);
+                            if (neighbour != blob.OriginalKingdom)
+                            {
+                                edges.Add(new BorderEdge
+                                {
+                                    Start = GridToWorld(cx, cy + 1),
+                                    End = GridToWorld(cx + 1, cy + 1),
+                                    KingdomA = blob.OriginalKingdom,
+                                    KingdomB = neighbour
+                                });
+                            }
+                        }
                     }
 
-                    // Check bottom neighbor
-                    if (cy - 1 >= 0 && !cellSet.Contains((long)cx << 32 | (uint)(cy - 1)))
+                    // Bottom neighbour
+                    if (cy - 1 >= 0 && !cellSet.Contains(((long)cx << 32) | (uint)(cy - 1)))
                     {
-                        edges.Add(new BorderEdge
+                        long nKey = ((long)cx << 32) | (uint)(cy - 1);
+                        if (!IsNeighbourInOtherBlobAndOwnedByThem(curKey, nKey))
                         {
-                            Start = GridToWorld(cx, cy),
-                            End = GridToWorld(cx + 1, cy),
-                            KingdomA = blob.SurroundingKingdom,
-                            KingdomB = blob.OriginalKingdom
-                        });
+                            Kingdom neighbour = ResolveTrueKingdom(cx, cy - 1);
+                            if (neighbour != blob.OriginalKingdom)
+                            {
+                                edges.Add(new BorderEdge
+                                {
+                                    Start = GridToWorld(cx, cy),
+                                    End = GridToWorld(cx + 1, cy),
+                                    KingdomA = neighbour,
+                                    KingdomB = blob.OriginalKingdom
+                                });
+                            }
+                        }
                     }
 
-                    // Also check map edges — if the blob cell is at the grid boundary,
-                    // it has an implicit border
+                    // Map-edge implicit edges — UNCHANGED, still use SurroundingKingdom fallback.
                     if (cx == 0)
                     {
                         edges.Add(new BorderEdge
@@ -823,6 +901,39 @@ namespace KingdomBorders
         }
 
         /// <summary>
+        /// Returns the true (pre-rewrite) kingdom of a grid cell. If the cell belongs
+        /// to another exclave blob, returns that blob's OriginalKingdom; otherwise
+        /// returns the current grid value (which was never rewritten for non-blob cells).
+        /// </summary>
+        private Kingdom ResolveTrueKingdom(int x, int y)
+        {
+            if (_blobCellMap != null)
+            {
+                long key = ((long)x << 32) | (uint)y;
+                if (_blobCellMap.TryGetValue(key, out var k))
+                    return k;
+            }
+            return _territoryGrid[x, y];
+        }
+
+        /// <summary>
+        /// Returns true when the neighbour cell belongs to another blob AND that other
+        /// blob is the canonical "owner" of the shared edge — meaning the current blob
+        /// should NOT emit it (the other blob will). Canonical owner is whichever cell
+        /// has the lower key, so each shared edge is emitted exactly once.
+        /// </summary>
+        private bool IsNeighbourInOtherBlobAndOwnedByThem(long currentCellKey, long neighbourCellKey)
+        {
+            if (_blobCellMap == null)
+                return false;
+            if (!_blobCellMap.ContainsKey(neighbourCellKey))
+                return false; // Neighbour is regular grid territory — always emit from this side.
+
+            // Both cells are in (different) blobs. Lower key wins.
+            return neighbourCellKey < currentCellKey;
+        }
+
+        /// <summary>
         /// Generates exclave border edges only for the specified kingdoms.
         /// </summary>
         public List<BorderEdge> FindExclaveBorderEdgesForKingdoms(HashSet<Kingdom> kingdoms)
@@ -870,6 +981,7 @@ namespace KingdomBorders
         public List<BorderEdge> FindBorderEdges()
         {
             var edges = new List<BorderEdge>();
+            bool hasBlobs = _blobCellMap != null && _blobCellMap.Count > 0;
 
             for (int x = 0; x < _gridResolution - 1; x++)
             {
@@ -880,47 +992,18 @@ namespace KingdomBorders
                     Kingdom right = _territoryGrid[x + 1, y];
                     if (current != right && (current != null || right != null))
                     {
-                        edges.Add(new BorderEdge
+                        // Skip if either cell is a blob cell — the exclave pass owns
+                        // this boundary and knows the true (pre-rewrite) neighbour.
+                        bool skip = false;
+                        if (hasBlobs)
                         {
-                            Start = GridToWorld(x + 1, y),
-                            End = GridToWorld(x + 1, y + 1),
-                            KingdomA = current,
-                            KingdomB = right
-                        });
-                    }
+                            long curKey = ((long)x << 32) | (uint)y;
+                            long rightKey = ((long)(x + 1) << 32) | (uint)y;
+                            if (_blobCellMap.ContainsKey(curKey) || _blobCellMap.ContainsKey(rightKey))
+                                skip = true;
+                        }
 
-                    Kingdom top = _territoryGrid[x, y + 1];
-                    if (current != top && (current != null || top != null))
-                    {
-                        edges.Add(new BorderEdge
-                        {
-                            Start = GridToWorld(x, y + 1),
-                            End = GridToWorld(x + 1, y + 1),
-                            KingdomA = current,
-                            KingdomB = top
-                        });
-                    }
-                }
-            }
-
-            ModLog.Log($"Found {edges.Count} border edges");
-            return edges;
-        }
-
-        public List<BorderEdge> FindBorderEdgesForKingdoms(HashSet<Kingdom> kingdoms)
-        {
-            var edges = new List<BorderEdge>();
-
-            for (int x = 0; x < _gridResolution - 1; x++)
-            {
-                for (int y = 0; y < _gridResolution - 1; y++)
-                {
-                    Kingdom current = _territoryGrid[x, y];
-
-                    Kingdom right = _territoryGrid[x + 1, y];
-                    if (current != right && (current != null || right != null))
-                    {
-                        if (kingdoms.Contains(current) || kingdoms.Contains(right))
+                        if (!skip)
                         {
                             edges.Add(new BorderEdge
                             {
@@ -935,7 +1018,16 @@ namespace KingdomBorders
                     Kingdom top = _territoryGrid[x, y + 1];
                     if (current != top && (current != null || top != null))
                     {
-                        if (kingdoms.Contains(current) || kingdoms.Contains(top))
+                        bool skip = false;
+                        if (hasBlobs)
+                        {
+                            long curKey = ((long)x << 32) | (uint)y;
+                            long topKey = ((long)x << 32) | (uint)(y + 1);
+                            if (_blobCellMap.ContainsKey(curKey) || _blobCellMap.ContainsKey(topKey))
+                                skip = true;
+                        }
+
+                        if (!skip)
                         {
                             edges.Add(new BorderEdge
                             {
@@ -944,6 +1036,77 @@ namespace KingdomBorders
                                 KingdomA = current,
                                 KingdomB = top
                             });
+                        }
+                    }
+                }
+            }
+
+            ModLog.Log($"Found {edges.Count} border edges");
+            return edges;
+        }
+
+        public List<BorderEdge> FindBorderEdgesForKingdoms(HashSet<Kingdom> kingdoms)
+        {
+            var edges = new List<BorderEdge>();
+            bool hasBlobs = _blobCellMap != null && _blobCellMap.Count > 0;
+
+            for (int x = 0; x < _gridResolution - 1; x++)
+            {
+                for (int y = 0; y < _gridResolution - 1; y++)
+                {
+                    Kingdom current = _territoryGrid[x, y];
+
+                    Kingdom right = _territoryGrid[x + 1, y];
+                    if (current != right && (current != null || right != null))
+                    {
+                        if (kingdoms.Contains(current) || kingdoms.Contains(right))
+                        {
+                            bool skip = false;
+                            if (hasBlobs)
+                            {
+                                long curKey = ((long)x << 32) | (uint)y;
+                                long rightKey = ((long)(x + 1) << 32) | (uint)y;
+                                if (_blobCellMap.ContainsKey(curKey) || _blobCellMap.ContainsKey(rightKey))
+                                    skip = true;
+                            }
+
+                            if (!skip)
+                            {
+                                edges.Add(new BorderEdge
+                                {
+                                    Start = GridToWorld(x + 1, y),
+                                    End = GridToWorld(x + 1, y + 1),
+                                    KingdomA = current,
+                                    KingdomB = right
+                                });
+                            }
+                        }
+                    }
+
+                    Kingdom top = _territoryGrid[x, y + 1];
+                    if (current != top && (current != null || top != null))
+                    {
+                        if (kingdoms.Contains(current) || kingdoms.Contains(top))
+                        {
+                            bool skip = false;
+                            if (hasBlobs)
+                            {
+                                long curKey = ((long)x << 32) | (uint)y;
+                                long topKey = ((long)x << 32) | (uint)(y + 1);
+                                if (_blobCellMap.ContainsKey(curKey) || _blobCellMap.ContainsKey(topKey))
+                                    skip = true;
+                            }
+
+                            if (!skip)
+                            {
+                                edges.Add(new BorderEdge
+                                {
+                                    Start = GridToWorld(x, y + 1),
+                                    End = GridToWorld(x + 1, y + 1),
+                                    KingdomA = current,
+                                    KingdomB = top
+                                });
+                            }
                         }
                     }
                 }
@@ -1086,65 +1249,79 @@ namespace KingdomBorders
         /// <summary>
         /// Chaikin's corner-cutting algorithm for smoothing polylines.
         /// Open polylines pin their first and last points.
+        /// Double-buffered: allocates exactly 2 backing lists regardless of iteration count.
         /// </summary>
         public List<Vec2> SmoothChaikin(List<Vec2> points, int iterations = 2)
         {
-            if (points.Count < 3)
+            if (points.Count < 3 || iterations <= 0)
                 return new List<Vec2>(points);
 
-            var result = new List<Vec2>(points);
+            // Final size after N iterations of open-polyline Chaikin: roughly points.Count * 2^N
+            int finalCap = points.Count << iterations;
+
+            var bufA = new List<Vec2>(finalCap);
+            var bufB = new List<Vec2>(finalCap);
+            bufA.AddRange(points);
 
             for (int iter = 0; iter < iterations; iter++)
             {
-                var smoothed = new List<Vec2>(result.Count * 2);
+                bool srcIsA = (iter & 1) == 0;
+                var src = srcIsA ? bufA : bufB;
+                var dst = srcIsA ? bufB : bufA;
 
-                smoothed.Add(result[0]);
+                dst.Clear();
+                dst.Add(src[0]);
 
-                for (int i = 0; i < result.Count - 1; i++)
+                int last = src.Count - 1;
+                for (int i = 0; i < last; i++)
                 {
-                    Vec2 p0 = result[i];
-                    Vec2 p1 = result[i + 1];
-
-                    smoothed.Add(p0 * 0.75f + p1 * 0.25f);
-                    smoothed.Add(p0 * 0.25f + p1 * 0.75f);
+                    Vec2 p0 = src[i];
+                    Vec2 p1 = src[i + 1];
+                    dst.Add(p0 * 0.75f + p1 * 0.25f);
+                    dst.Add(p0 * 0.25f + p1 * 0.75f);
                 }
 
-                smoothed.Add(result[result.Count - 1]);
-
-                result = smoothed;
+                dst.Add(src[last]);
             }
 
-            return result;
+            // Result lives in bufB if iterations is odd, bufA if even
+            return ((iterations & 1) == 1) ? bufB : bufA;
         }
 
         /// <summary>
         /// Chaikin's corner-cutting for closed loops. All corners are smoothed uniformly
         /// with no pinned endpoints, producing a continuous smooth ring.
+        /// Double-buffered: allocates exactly 2 backing lists regardless of iteration count.
         /// </summary>
         public List<Vec2> SmoothChaikinClosed(List<Vec2> points, int iterations = 2)
         {
-            if (points.Count < 3)
+            if (points.Count < 3 || iterations <= 0)
                 return new List<Vec2>(points);
 
-            var result = new List<Vec2>(points);
+            int finalCap = points.Count << iterations;
+
+            var bufA = new List<Vec2>(finalCap);
+            var bufB = new List<Vec2>(finalCap);
+            bufA.AddRange(points);
 
             for (int iter = 0; iter < iterations; iter++)
             {
-                var smoothed = new List<Vec2>(result.Count * 2);
+                bool srcIsA = (iter & 1) == 0;
+                var src = srcIsA ? bufA : bufB;
+                var dst = srcIsA ? bufB : bufA;
 
-                for (int i = 0; i < result.Count; i++)
+                dst.Clear();
+                int count = src.Count;
+                for (int i = 0; i < count; i++)
                 {
-                    Vec2 p0 = result[i];
-                    Vec2 p1 = result[(i + 1) % result.Count];
-
-                    smoothed.Add(p0 * 0.75f + p1 * 0.25f);
-                    smoothed.Add(p0 * 0.25f + p1 * 0.75f);
+                    Vec2 p0 = src[i];
+                    Vec2 p1 = src[(i + 1) % count];
+                    dst.Add(p0 * 0.75f + p1 * 0.25f);
+                    dst.Add(p0 * 0.25f + p1 * 0.75f);
                 }
-
-                result = smoothed;
             }
 
-            return result;
+            return ((iterations & 1) == 1) ? bufB : bufA;
         }
 
         /// <summary>
@@ -1184,7 +1361,13 @@ namespace KingdomBorders
             x = Math.Max(0, Math.Min(_gridResolution - 1, x));
             y = Math.Max(0, Math.Min(_gridResolution - 1, y));
 
-            return _territoryGrid[x, y];
+            // Honour the blob map: cells inside a detected exclave were rewritten to the
+            // surrounding kingdom in the grid, but their TRUE kingdom (for side-of-border
+            // determination, junction matching, colour selection) is the blob's
+            // OriginalKingdom. Without this, DetermineKingdomSides samples that land
+            // inside an exclave produce the wrong side assignment and junctions fail
+            // to match by kingdom.
+            return ResolveTrueKingdom(x, y);
         }
 
         public static uint GetKingdomColor(Kingdom kingdom)
@@ -1749,6 +1932,34 @@ namespace KingdomBorders
 
             if (restored > 0)
                 ModLog.Log($"Restored {restored} exclave cells before rebuild");
+        }
+
+        /// <summary>
+        /// Builds a lookup from every blob cell key to that blob's OriginalKingdom.
+        /// Must be called whenever _exclaveBlobs changes.
+        /// </summary>
+        private void RebuildBlobCellMap()
+        {
+            if (_exclaveBlobs == null || _exclaveBlobs.Count == 0)
+            {
+                _blobCellMap = null;
+                return;
+            }
+
+            int total = 0;
+            for (int b = 0; b < _exclaveBlobs.Count; b++)
+                total += _exclaveBlobs[b].Cells.Count;
+
+            var map = new Dictionary<long, Kingdom>(total);
+            foreach (var blob in _exclaveBlobs)
+            {
+                foreach (var (x, y) in blob.Cells)
+                {
+                    long key = ((long)x << 32) | (uint)y;
+                    map[key] = blob.OriginalKingdom;
+                }
+            }
+            _blobCellMap = map;
         }
     }
 }
