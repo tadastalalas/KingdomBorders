@@ -60,11 +60,14 @@
     </Reference>
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Remove="BLSource\**" />
-    <EmbeddedResource Remove="BLSource\**" />
-    <None Remove="BLSource\**" />
-  </ItemGroup>
+    <ItemGroup>
+	    <Compile Remove="BLSource\**" />
+	    <EmbeddedResource Remove="BLSource\**" />
+	    <None Remove="BLSource\**" />
+	    <None Include="BLSource\**">
+		    <Visible>true</Visible>
+	    </None>
+    </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Nullable" Version="1.3.1" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
