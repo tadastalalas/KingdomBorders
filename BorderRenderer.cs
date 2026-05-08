@@ -304,19 +304,25 @@ namespace KingdomBorders
             return (int)Math.Round(v * 100f);
         }
 
-        public void UpdateAlphaForCameraDistance(float cameraDistance)
+        // REPLACE the existing UpdateAlphaForCameraDistance method with this
+        public void UpdateAlphaForCameraDistance(float cameraDistance, bool isVisible)
         {
-            float minVisible = MCMSettings.Instance?.FadeStartHeight ?? 40;
-            float maxVisible = MCMSettings.Instance?.FullOpacityHeight ?? 200;
-            const float maxAlpha = 0.7f;
+            float alpha = 0f;
 
-            if (maxVisible <= minVisible)
-                maxVisible = minVisible + 1f;
+            if (isVisible)
+            {
+                float minVisible = MCMSettings.Instance?.FadeStartHeight ?? 40;
+                float maxVisible = MCMSettings.Instance?.FullOpacityHeight ?? 200;
+                const float maxAlpha = 0.7f;
 
-            float alpha;
-            if (cameraDistance <= minVisible) alpha = 0f;
-            else if (cameraDistance >= maxVisible) alpha = maxAlpha;
-            else alpha = ((cameraDistance - minVisible) / (maxVisible - minVisible)) * maxAlpha;
+                if (maxVisible <= minVisible)
+                    maxVisible = minVisible + 1f;
+
+                if (cameraDistance <= minVisible) alpha = 0f;
+                else if (cameraDistance >= maxVisible) alpha = maxAlpha;
+                else alpha = ((cameraDistance - minVisible) / (maxVisible - minVisible)) * maxAlpha;
+            }
+            // isVisible == false → alpha stays 0f, all entities hidden
 
             for (int i = 0; i < _entries.Count; i++)
             {

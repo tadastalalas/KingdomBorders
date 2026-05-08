@@ -99,7 +99,15 @@ namespace KingdomBorders
         private HashSet<long> _preservedStripKeys;
 
         public BorderRenderer Renderer { get; private set; }
+
         public Scene MapScene { get; private set; }
+
+        public bool IsVisible { get; private set; } = true;
+
+        public void ToggleVisibility()
+        {
+            IsVisible = !IsVisible;
+        }
 
         public override void RegisterEvents()
         {
@@ -310,8 +318,8 @@ namespace KingdomBorders
         }
 
         private void OnSettlementOwnerChanged(Settlement settlement, bool openToClaim,
-    Hero newOwner, Hero oldOwner, Hero capturerHero,
-    ChangeOwnerOfSettlementAction.ChangeOwnerOfSettlementDetail detail)
+            Hero newOwner, Hero oldOwner, Hero capturerHero,
+            ChangeOwnerOfSettlementAction.ChangeOwnerOfSettlementDetail detail)
         {
             if (!_isInitialized)
                 return;
@@ -1188,6 +1196,14 @@ namespace KingdomBorders
             _buildRequested = false;
             _isInitialized = false;
             _phase = BuildPhase.Idle;
+        }
+
+        /// <summary>
+        /// Queues a full border rebuild. Called externally by console commands.
+        /// </summary>
+        public void ForceFullRebuild()
+        {
+            _fullRebuildRequested = true;
         }
 
         private void DiagBeginRebuild()

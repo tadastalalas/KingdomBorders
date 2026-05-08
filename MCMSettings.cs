@@ -18,13 +18,17 @@ namespace KingdomBorders
         public override string FormatType
         { get { return "json2"; } }
 
-        [SettingPropertyInteger("Fade Start Height", 0, 300, Order = 0, RequireRestart = false, HintText = "Camera height at which borders start to become visible. Lower values make borders appear when zoomed in closer. [Default: 50]")]
+        [SettingPropertyInteger("Fade Start Height", 0, 300, Order = 0, RequireRestart = false, HintText = "Camera height at which borders start to become visible. Lower values make borders appear when zoomed in closer. [Default: 40]")]
         [SettingPropertyGroup("Visibility", GroupOrder = 0)]
-        public int FadeStartHeight { get; set; } = 50;
+        public int FadeStartHeight { get; set; } = 40;
 
-        [SettingPropertyInteger("Full Opacity Height", 50, 500, Order = 1, RequireRestart = false, HintText = "Camera height at which borders reach full opacity. [Default: 400]")]
+        [SettingPropertyInteger("Full Opacity Height", 50, 500, Order = 1, RequireRestart = false, HintText = "Camera height at which borders reach full opacity. [Default: 500]")]
         [SettingPropertyGroup("Visibility", GroupOrder = 0)]
-        public int FullOpacityHeight { get; set; } = 400;
+        public int FullOpacityHeight { get; set; } = 500;
+
+        [SettingPropertyText("Toggle Borders Hotkey", Order = 2, RequireRestart = false, HintText = "Key to toggle border visibility on/off. [Default: M]")]
+        [SettingPropertyGroup("Visibility", GroupOrder = 0)]
+        public string ToggleBordersHotkey { get; set; } = "M";
 
         [SettingPropertyFloatingInteger("Border Width", 0.5f, 5.0f, "#0.0", Order = 0, RequireRestart = false, HintText = "Width of each kingdom's border strip in world units. [Default: 1.05]")]
         [SettingPropertyGroup("Appearance", GroupOrder = 1)]
@@ -40,8 +44,8 @@ namespace KingdomBorders
 
         public int CornerSmoothing { get; set; } = 3;
 
-        [SettingPropertyBool("Show Borders on Water", Order = 0, RequireRestart = false, HintText = "Renders borders over water surfaces. [Default: enabled]")]
+        [SettingPropertyBool("Show Borders on Water", Order = 0, RequireRestart = false, HintText = "Renders borders over water surfaces. [Default: disabled]")]
         [SettingPropertyGroup("Experimental", GroupOrder = 3)]
-        public bool ShowBordersOnWater { get; set; } = true;
+        public bool ShowBordersOnWater { get; set; } = false;
     }
 }
