@@ -1,0 +1,35 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<base xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" type="string">
+	<tags>
+		<tag language="English" />
+	</tags>
+	<strings>
+		<string id="KB_EBzIuYethH" text="Kingdom Borders" />
+		<string id="KB_bE7uoWvvhj" text="Visibility" />
+		<string id="KB_ILCyBhgBj8" text="Appearance" />
+		<string id="KB_ijWOSHr4JT" text="Experimental" />
+		<string id="KB_SSoTUbKffp" text="Fade Start Height" />
+		<string id="KB_LLay9BBZaY" text="Full Opacity Height" />
+		<string id="KB_e2dqLpQUOt" text="Toggle Borders Hotkey" />
+		<string id="KB_j3dQf5mdFj" text="Border Width" />
+		<string id="KB_44YGFjBRwD" text="Border Gap" />
+		<string id="KB_iQDKtjjGgA" text="Height Offset" />
+		<string id="KB_dd8z7WavCY" text="Show Borders on Water" />
+		<string id="KB_tSWvnFByJ5" text="Camera height at which borders start to become visible. Lower values make borders appear when zoomed in closer. [Default: 40]" />
+		<string id="KB_Nvt3nDz9B9" text="Camera height at which borders reach full opacity. [Default: 500]" />
+		<string id="KB_sgyNhjlxl4" text="Key to toggle border visibility on/off. [Default: M]" />
+		<string id="KB_rZKzD08uWg" text="Width of each kingdom's border strip in world units. [Default: 1.05]" />
+		<string id="KB_esaK0vgYFX" text="Gap between two adjacent kingdom border strips. [Default: 0.30]" />
+		<string id="KB_r5gC0YQqcu" text="How far above the terrain surface the border is raised. Increase if borders clip into mountains. [Default: 0.55]" />
+		<string id="KB_rKUsLbE1lp" text="Renders borders over water surfaces. [Default: disabled]" />
+		<string id="KB_99NOgT2Y0n" text="" /><!-- {=KB_99NOgT2Y0n} -->
+		<string id="KB_GG5BW78w88" text="" /><!-- {=KB_GG5BW78w88} -->
+		<string id="KB_r5mBKIWelk" text="" /><!-- {=KB_r5mBKIWelk} -->
+		<string id="KB_Y0GmZgp0H3" text="" /><!-- {=KB_Y0GmZgp0H3} -->
+		<string id="KB_mvcbyndDid" text="" /><!-- {=KB_mvcbyndDid} -->
+		<string id="KB_Xsi6Fl5Zp6" text="" /><!-- {=KB_Xsi6Fl5Zp6} -->
+		<string id="KB_GEvl58fFtW" text="" /><!-- {=KB_GEvl58fFtW} -->
+		<string id="KB_wwDe4tfLC8" text="" /><!-- {=KB_wwDe4tfLC8} -->
+		<string id="KB_CbldHPbEzw" text="" /><!-- {=KB_CbldHPbEzw} -->
+	</strings>
+</base>

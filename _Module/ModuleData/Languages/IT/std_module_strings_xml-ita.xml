@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<base xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" type="string">
+	<tags>
+		<tag language="Italiano" />
+	</tags>
+	<strings>
+		<string id="KB_EBzIuYethH" text="Confini del Regno" />
+		<string id="KB_bE7uoWvvhj" text="Visibilità" />
+		<string id="KB_ILCyBhgBj8" text="Aspetto" />
+		<string id="KB_ijWOSHr4JT" text="Sperimentale" />
+		<string id="KB_SSoTUbKffp" text="Altezza di Inizio Dissolvenza" />
+		<string id="KB_LLay9BBZaY" text="Altezza Opacità Totale" />
+		<string id="KB_e2dqLpQUOt" text="Scorciatoia per Mostrare/Nascondere i Confini" />
+		<string id="KB_j3dQf5mdFj" text="Larghezza del Confine" />
+		<string id="KB_44YGFjBRwD" text="Distanza tra i Confini" />
+		<string id="KB_iQDKtjjGgA" text="Scostamento in Altezza" />
+		<string id="KB_dd8z7WavCY" text="Mostra Confini sull'Acqua" />
+		<string id="KB_tSWvnFByJ5" text="Altezza della telecamera alla quale i confini iniziano a diventare visibili. Valori più bassi fanno apparire i confini con uno zoom più ravvicinato. [Predefinito: 40]" />
+		<string id="KB_Nvt3nDz9B9" text="Altezza della telecamera alla quale i confini raggiungono l'opacità massima. [Predefinito: 500]" />
+		<string id="KB_sgyNhjlxl4" text="Tasto per attivare/disattivare la visibilità dei confini. [Predefinito: M]" />
+		<string id="KB_rZKzD08uWg" text="Larghezza del nastro di confine di ogni regno in unità del mondo. [Predefinito: 1.05]" />
+		<string id="KB_esaK0vgYFX" text="Distananza tra due nastri di confine di regni adiacenti. [Predefinito: 0.30]" />
+		<string id="KB_r5gC0YQqcu" text="Quanto è sollevato il confine rispetto alla superficie del terreno. Aumenta il valore se i confini si compenetrano nelle montagne. [Predefinito: 0.55]" />
+		<string id="KB_rKUsLbE1lp" text="Renderizza i confini sulle superfici d'acqua. [Predefinito: disattivato]" />
+		<string id="KB_99NOgT2Y0n" text="" />
+		<!-- {=KB_99NOgT2Y0n} -->
+		<string id="KB_GG5BW78w88" text="" />
+		<!-- {=KB_GG5BW78w88} -->
+		<string id="KB_r5mBKIWelk" text="" />
+		<!-- {=KB_r5mBKIWelk} -->
+		<string id="KB_Y0GmZgp0H3" text="" />
+		<!-- {=KB_Y0GmZgp0H3} -->
+		<string id="KB_mvcbyndDid" text="" />
+		<!-- {=KB_mvcbyndDid} -->
+		<string id="KB_Xsi6Fl5Zp6" text="" />
+		<!-- {=KB_Xsi6Fl5Zp6} -->
+		<string id="KB_GEvl58fFtW" text="" />
+		<!-- {=KB_GEvl58fFtW} -->
+		<string id="KB_wwDe4tfLC8" text="" />
+		<!-- {=KB_wwDe4tfLC8} -->
+		<string id="KB_CbldHPbEzw" text="" />
+		<!-- {=KB_CbldHPbEzw} -->
+	</strings>
+</base>

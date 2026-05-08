@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<base xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" type="string">
+	<tags>
+		<tag language="한국어" />
+	</tags>
+	<strings>
+		<string id="KB_EBzIuYethH" text="왕국 국경" />
+		<string id="KB_bE7uoWvvhj" text="가시성" />
+		<string id="KB_ILCyBhgBj8" text="외형" />
+		<string id="KB_ijWOSHr4JT" text="실험적" />
+		<string id="KB_SSoTUbKffp" text="투명해지기 시작하는 높이" />
+		<string id="KB_LLay9BBZaY" text="완전 불투명 높이" />
+		<string id="KB_e2dqLpQUOt" text="국경 표시 전환 단축키" />
+		<string id="KB_j3dQf5mdFj" text="국경 두께" />
+		<string id="KB_44YGFjBRwD" text="국경 간격" />
+		<string id="KB_iQDKtjjGgA" text="높이 오프셋" />
+		<string id="KB_dd8z7WavCY" text="물 위에 국경 표시" />
+		<string id="KB_tSWvnFByJ5" text="국경이 보이기 시작하는 카메라 높이입니다. 값이 낮을수록 카메라를 더 가깝게 확대해야 국경이 나타납니다. [기본값: 40]" />
+		<string id="KB_Nvt3nDz9B9" text="국경이 완전히 불투명해지는 카메라 높이입니다. [기본값: 500]" />
+		<string id="KB_sgyNhjlxl4" text="국경 표시를 켜거나 끄는 단축키입니다. [기본값: M]" />
+		<string id="KB_rZKzD08uWg" text="월드 단위로 표시되는 각 왕국의 국경선 두께입니다. [기본값: 1.05]" />
+		<string id="KB_esaK0vgYFX" text="인접한 두 왕국 국경선 사이의 간격입니다. [기본값: 0.30]" />
+		<string id="KB_r5gC0YQqcu" text="지형 표면에서 국경이 얼마나 높게 떠 있을지 결정합니다. 국경이 산 안으로 파묻히면 이 값을 늘리십시오. [기본값: 0.55]" />
+		<string id="KB_rKUsLbE1lp" text="수면 위에도 국경을 렌더링합니다. [기본값: 비활성화됨]" />
+		<string id="KB_99NOgT2Y0n" text="" />
+		<!-- {=KB_99NOgT2Y0n} -->
+		<string id="KB_GG5BW78w88" text="" />
+		<!-- {=KB_GG5BW78w88} -->
+		<string id="KB_r5mBKIWelk" text="" />
+		<!-- {=KB_r5mBKIWelk} -->
+		<string id="KB_Y0GmZgp0H3" text="" />
+		<!-- {=KB_Y0GmZgp0H3} -->
+		<string id="KB_mvcbyndDid" text="" />
+		<!-- {=KB_mvcbyndDid} -->
+		<string id="KB_Xsi6Fl5Zp6" text="" />
+		<!-- {=KB_Xsi6Fl5Zp6} -->
+		<string id="KB_GEvl58fFtW" text="" />
+		<!-- {=KB_GEvl58fFtW} -->
+		<string id="KB_wwDe4tfLC8" text="" />
+		<!-- {=KB_wwDe4tfLC8} -->
+		<string id="KB_CbldHPbEzw" text="" />
+		<!-- {=KB_CbldHPbEzw} -->
+	</strings>
+</base>

@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<base xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" type="string">
+	<tags>
+		<tag language="Русский" />
+	</tags>
+	<strings>
+		<string id="KB_EBzIuYethH" text="Границы королевств" />
+		<string id="KB_bE7uoWvvhj" text="Видимость" />
+		<string id="KB_ILCyBhgBj8" text="Внешний вид" />
+		<string id="KB_ijWOSHr4JT" text="Экспериментальное" />
+		<string id="KB_SSoTUbKffp" text="Высота начала исчезновения" />
+		<string id="KB_LLay9BBZaY" text="Высота полной непрозрачности" />
+		<string id="KB_e2dqLpQUOt" text="Горячая клавиша переключения границ" />
+		<string id="KB_j3dQf5mdFj" text="Ширина границы" />
+		<string id="KB_44YGFjBRwD" text="Зазор границ" />
+		<string id="KB_iQDKtjjGgA" text="Смещение по высоте" />
+		<string id="KB_dd8z7WavCY" text="Показывать границы на воде" />
+		<string id="KB_tSWvnFByJ5" text="Высота камеры, при которой границы начинают становиться видимыми. При меньших значениях границы появляются при более сильном приближении. [По умолчанию: 40]" />
+		<string id="KB_Nvt3nDz9B9" text="Высота камеры, при которой границы достигают полной непрозрачности. [По умолчанию: 500]" />
+		<string id="KB_sgyNhjlxl4" text="Клавиша для переключения (вкл/выкл) видимости границ. [По умолчанию: M]" />
+		<string id="KB_rZKzD08uWg" text="Ширина пограничной полосы каждого королевства в игровых единицах координат. [По умолчанию: 1.05]" />
+		<string id="KB_esaK0vgYFX" text="Зазор между двумя соседними пограничными полосами разных королевств. [По умолчанию: 0.30]" />
+		<string id="KB_r5gC0YQqcu" text="Насколько высоко над поверхностью земли приподнята граница. Увеличьте значение, если границы проваливаются в горы. [По умолчанию: 0.55]" />
+		<string id="KB_rKUsLbE1lp" text="Отображать границы поверх водной поверхности. [По умолчанию: Выключено]" />
+		<string id="KB_99NOgT2Y0n" text="" />
+		<!-- {=KB_99NOgT2Y0n} -->
+		<string id="KB_GG5BW78w88" text="" />
+		<!-- {=KB_GG5BW78w88} -->
+		<string id="KB_r5mBKIWelk" text="" />
+		<!-- {=KB_r5mBKIWelk} -->
+		<string id="KB_Y0GmZgp0H3" text="" />
+		<!-- {=KB_Y0GmZgp0H3} -->
+		<string id="KB_mvcbyndDid" text="" />
+		<!-- {=KB_mvcbyndDid} -->
+		<string id="KB_Xsi6Fl5Zp6" text="" />
+		<!-- {=KB_Xsi6Fl5Zp6} -->
+		<string id="KB_GEvl58fFtW" text="" />
+		<!-- {=KB_GEvl58fFtW} -->
+		<string id="KB_wwDe4tfLC8" text="" />
+		<!-- {=KB_wwDe4tfLC8} -->
+		<string id="KB_CbldHPbEzw" text="" />
+		<!-- {=KB_CbldHPbEzw} -->
+	</strings>
+</base>

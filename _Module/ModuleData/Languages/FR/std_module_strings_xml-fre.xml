@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<base xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" type="string">
+	<tags>
+		<tag language="Français" />
+	</tags>
+	<strings>
+		<string id="KB_EBzIuYethH" text="Frontières des Royaumes" />
+		<string id="KB_bE7uoWvvhj" text="Visibilité" />
+		<string id="KB_ILCyBhgBj8" text="Apparence" />
+		<string id="KB_ijWOSHr4JT" text="Expérimental" />
+		<string id="KB_SSoTUbKffp" text="Hauteur de début du fondu" />
+		<string id="KB_LLay9BBZaY" text="Hauteur d'opacité totale" />
+		<string id="KB_e2dqLpQUOt" text="Raccourci pour afficher/masquer les frontières" />
+		<string id="KB_j3dQf5mdFj" text="Largeur de la frontière" />
+		<string id="KB_44YGFjBRwD" text="Espacement des frontières" />
+		<string id="KB_iQDKtjjGgA" text="Décalage vertical" />
+		<string id="KB_dd8z7WavCY" text="Afficher les frontières sur l'eau" />
+		<string id="KB_tSWvnFByJ5" text="Hauteur de la caméra à laquelle les frontières commencent à devenir visibles. Des valeurs plus basses font apparaître les frontières en zoomant de plus près. [Défaut : 40]" />
+		<string id="KB_Nvt3nDz9B9" text="Hauteur de la caméra à laquelle les frontières atteignent l'opacité totale. [Défaut : 500]" />
+		<string id="KB_sgyNhjlxl4" text="Touche pour activer/désactiver la visibilité des frontières. [Défaut : M]" />
+		<string id="KB_rZKzD08uWg" text="Largeur de la bande frontalière de chaque royaume en unités du monde. [Défaut : 1.05]" />
+		<string id="KB_esaK0vgYFX" text="Écart entre deux bandes frontalières de royaumes adjacents. [Défaut : 0.30]" />
+		<string id="KB_r5gC0YQqcu" text="À quelle hauteur au-dessus de la surface du terrain la frontière est surélevée. Augmentez la valeur si les frontières disparaissent dans les montagnes. [Défaut : 0.55]" />
+		<string id="KB_rKUsLbE1lp" text="Affiche les frontières sur les surfaces d'eau. [Défaut : désactivé]" />
+		<string id="KB_99NOgT2Y0n" text="" />
+		<!-- {=KB_99NOgT2Y0n} -->
+		<string id="KB_GG5BW78w88" text="" />
+		<!-- {=KB_GG5BW78w88} -->
+		<string id="KB_r5mBKIWelk" text="" />
+		<!-- {=KB_r5mBKIWelk} -->
+		<string id="KB_Y0GmZgp0H3" text="" />
+		<!-- {=KB_Y0GmZgp0H3} -->
+		<string id="KB_mvcbyndDid" text="" />
+		<!-- {=KB_mvcbyndDid} -->
+		<string id="KB_Xsi6Fl5Zp6" text="" />
+		<!-- {=KB_Xsi6Fl5Zp6} -->
+		<string id="KB_GEvl58fFtW" text="" />
+		<!-- {=KB_GEvl58fFtW} -->
+		<string id="KB_wwDe4tfLC8" text="" />
+		<!-- {=KB_wwDe4tfLC8} -->
+		<string id="KB_CbldHPbEzw" text="" />
+		<!-- {=KB_CbldHPbEzw} -->
+	</strings>
+</base>

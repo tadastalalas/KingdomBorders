@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<base xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" type="string">
+	<tags>
+		<tag language="Polski" />
+	</tags>
+	<strings>
+		<string id="KB_EBzIuYethH" text="Granice Królestw" />
+		<string id="KB_bE7uoWvvhj" text="Widoczność" />
+		<string id="KB_ILCyBhgBj8" text="Wygląd" />
+		<string id="KB_ijWOSHr4JT" text="Eksperymentalne" />
+		<string id="KB_SSoTUbKffp" text="Wysokość rozpoczęcia zanikania" />
+		<string id="KB_LLay9BBZaY" text="Wysokość pełnej nieprzezroczystości" />
+		<string id="KB_e2dqLpQUOt" text="Klawisz przełączania granic" />
+		<string id="KB_j3dQf5mdFj" text="Szerokość granicy" />
+		<string id="KB_44YGFjBRwD" text="Odstęp między granicami" />
+		<string id="KB_iQDKtjjGgA" text="Przesunięcie wysokości" />
+		<string id="KB_dd8z7WavCY" text="Pokaż granice na wodzie" />
+		<string id="KB_tSWvnFByJ5" text="Wysokość kamery, przy której granice zaczynają być widoczne. Niższe wartości sprawiają, że granice pojawiają się przy większym przybliżeniu. [Domyślnie: 40]" />
+		<string id="KB_Nvt3nDz9B9" text="Wysokość kamery, przy której granice osiągają pełną nieprzezroczystość. [Domyślnie: 500]" />
+		<string id="KB_sgyNhjlxl4" text="Klawisz do włączania i wyłączania widoczności granic. [Domyślnie: M]" />
+		<string id="KB_rZKzD08uWg" text="Szerokość paska granicznego każdego królestwa w jednostkach świata. [Domyślnie: 1.05]" />
+		<string id="KB_esaK0vgYFX" text="Odstęp między dwoma sąsiadującymi paskami granicznymi królestw. [Domyślnie: 0.30]" />
+		<string id="KB_r5gC0YQqcu" text="Jak wysoko nad powierzchnią terenu jest uniesiona granica. Zwiększ, jeśli granice znikają w górach. [Domyślnie: 0.55]" />
+		<string id="KB_rKUsLbE1lp" text="Renderuje granice na powierzchniach wody. [Domyślnie: wyłączone]" />
+		<string id="KB_99NOgT2Y0n" text="" />
+		<!-- {=KB_99NOgT2Y0n} -->
+		<string id="KB_GG5BW78w88" text="" />
+		<!-- {=KB_GG5BW78w88} -->
+		<string id="KB_r5mBKIWelk" text="" />
+		<!-- {=KB_r5mBKIWelk} -->
+		<string id="KB_Y0GmZgp0H3" text="" />
+		<!-- {=KB_Y0GmZgp0H3} -->
+		<string id="KB_mvcbyndDid" text="" />
+		<!-- {=KB_mvcbyndDid} -->
+		<string id="KB_Xsi6Fl5Zp6" text="" />
+		<!-- {=KB_Xsi6Fl5Zp6} -->
+		<string id="KB_GEvl58fFtW" text="" />
+		<!-- {=KB_GEvl58fFtW} -->
+		<string id="KB_wwDe4tfLC8" text="" />
+		<!-- {=KB_wwDe4tfLC8} -->
+		<string id="KB_CbldHPbEzw" text="" />
+		<!-- {=KB_CbldHPbEzw} -->
+	</strings>
+</base>

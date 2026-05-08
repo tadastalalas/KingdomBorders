@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<base xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" type="string">
+	<tags>
+		<tag language="繁體中文" />
+	</tags>
+	<strings>
+		<string id="KB_EBzIuYethH" text="王國邊界" />
+		<string id="KB_bE7uoWvvhj" text="可見度" />
+		<string id="KB_ILCyBhgBj8" text="外觀" />
+		<string id="KB_ijWOSHr4JT" text="實驗性" />
+		<string id="KB_SSoTUbKffp" text="漸隱起始高度" />
+		<string id="KB_LLay9BBZaY" text="完全不透明高度" />
+		<string id="KB_e2dqLpQUOt" text="切換邊界顯示快捷鍵" />
+		<string id="KB_j3dQf5mdFj" text="邊界寬度" />
+		<string id="KB_44YGFjBRwD" text="邊界間隙" />
+		<string id="KB_iQDKtjjGgA" text="高度偏移" />
+		<string id="KB_dd8z7WavCY" text="在水面上顯示邊界" />
+		<string id="KB_tSWvnFByJ5" text="邊界開始變得可見的鏡頭高度。數值越低，鏡頭需拉得越近才會顯示邊界。[預設值：40]" />
+		<string id="KB_Nvt3nDz9B9" text="邊界達到完全不透明情況時的鏡頭高度。[預設值：500]" />
+		<string id="KB_sgyNhjlxl4" text="開啟或關閉邊界可見性的快捷鍵。[預設值：M]" />
+		<string id="KB_rZKzD08uWg" text="每個王國邊界帶的寬度（以世界單位計）。[預設值：1.05]" />
+		<string id="KB_esaK0vgYFX" text="兩個相鄰王國邊界帶之間的間隙。[預設值：0.30]" />
+		<string id="KB_r5gC0YQqcu" text="邊界懸浮在地形表面上方的高度。如果邊界陷入山地中，請增大此值。[預設值：0.55]" />
+		<string id="KB_rKUsLbE1lp" text="在水面上渲染邊界。[預設：已關閉]" />
+		<string id="KB_99NOgT2Y0n" text="" />
+		<!-- {=KB_99NOgT2Y0n} -->
+		<string id="KB_GG5BW78w88" text="" />
+		<!-- {=KB_GG5BW78w88} -->
+		<string id="KB_r5mBKIWelk" text="" />
+		<!-- {=KB_r5mBKIWelk} -->
+		<string id="KB_Y0GmZgp0H3" text="" />
+		<!-- {=KB_Y0GmZgp0H3} -->
+		<string id="KB_mvcbyndDid" text="" />
+		<!-- {=KB_mvcbyndDid} -->
+		<string id="KB_Xsi6Fl5Zp6" text="" />
+		<!-- {=KB_Xsi6Fl5Zp6} -->
+		<string id="KB_GEvl58fFtW" text="" />
+		<!-- {=KB_GEvl58fFtW} -->
+		<string id="KB_wwDe4tfLC8" text="" />
+		<!-- {=KB_wwDe4tfLC8} -->
+		<string id="KB_CbldHPbEzw" text="" />
+		<!-- {=KB_CbldHPbEzw} -->
+	</strings>
+</base>
