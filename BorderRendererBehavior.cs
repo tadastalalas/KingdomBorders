@@ -26,10 +26,6 @@ namespace KingdomBorders
         private bool _isInitialized;
         private BorderCalculator _calculator;
 
-        // ADD: MCM snapshot for fill toggle/opacity (no rebuild needed when these change)
-        private bool _lastShowFill;
-        private float _lastFillOpacity;
-
         // Deferred build: set by BeginBuildBorders(), consumed by ApplicationTick()
         // once the map screen is actually active.
         private bool _buildRequested;
@@ -87,6 +83,7 @@ namespace KingdomBorders
         private float _lastBorderGap;
         private float _lastHeightOffset;
         private int _lastCornerSmoothing;
+        private int _lastGridResolution;
 
         // Junction data for the current build
         private List<JunctionInfo> _junctions;
@@ -262,9 +259,6 @@ namespace KingdomBorders
             }
         }
 
-        /// <summary>
-        /// Detects MCM setting changes that require a full border rebuild.
-        /// </summary>
         private void CheckMCMSettingsChanged()
         {
             var settings = MCMSettings.Instance;
@@ -276,12 +270,14 @@ namespace KingdomBorders
             float borderGap = settings.BorderGap;
             float heightOffset = settings.HeightOffset;
             int cornerSmoothing = settings.CornerSmoothing;
+            int gridResolution = settings.GridResolution;
 
             if (showOnWater != _lastShowOnWater ||
                 Math.Abs(borderWidth - _lastBorderWidth) > 0.001f ||
                 Math.Abs(borderGap - _lastBorderGap) > 0.001f ||
                 Math.Abs(heightOffset - _lastHeightOffset) > 0.001f ||
-                cornerSmoothing != _lastCornerSmoothing)
+                cornerSmoothing != _lastCornerSmoothing ||
+                gridResolution != _lastGridResolution)
             {
                 ModLog.Log($"MCM settings changed — triggering full rebuild");
                 SnapshotMCMSettings();
@@ -300,6 +296,7 @@ namespace KingdomBorders
             _lastBorderGap = settings.BorderGap;
             _lastHeightOffset = settings.HeightOffset;
             _lastCornerSmoothing = settings.CornerSmoothing;
+            _lastGridResolution = settings.GridResolution;
         }
 
         /// <summary>
@@ -316,7 +313,7 @@ namespace KingdomBorders
             _cachedBuilders = null;
             _affectedKingdoms = null; // null = full rebuild, process all kingdoms
             _preservedStripKeys = null;
-            _calculator = new BorderCalculator(resolution: 150);
+            _calculator = new BorderCalculator(resolution: MCMSettings.Instance?.GridResolution ?? 150);
             _calculator.CalculateMapBounds();
             _calculator.BeginBuildTerritoryGrid();
             _phase = BuildPhase.BuildingGrid;
@@ -733,7 +730,7 @@ namespace KingdomBorders
 
                 _cachedBuilders = null;
                 _affectedKingdoms = null;
-                _calculator = new BorderCalculator(resolution: 150);
+                _calculator = new BorderCalculator(resolution: MCMSettings.Instance?.GridResolution ?? 150);
                 _calculator.CalculateMapBounds();
                 _calculator.BeginBuildTerritoryGrid();
 

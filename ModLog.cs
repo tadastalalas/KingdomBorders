@@ -34,6 +34,9 @@ namespace KingdomBorders
         {
             try
             {
+                if (!(MCMSettings.Instance?.EnableDebugLogging ?? false))
+                    return;
+
                 if (_writer == null)
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(LogPath));

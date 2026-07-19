@@ -15,30 +15,19 @@
 		<string id="KB_44YGFjBRwD" text="国境の隙間" />
 		<string id="KB_iQDKtjjGgA" text="高度オフセット" />
 		<string id="KB_dd8z7WavCY" text="水上に国境を表示" />
-		<string id="KB_tSWvnFByJ5" text="国境が見え始めるカメラの高度です。値が小さいほど、よりズームインした時に国境が表示されるようになります。[デフォルト: 40]" />
-		<string id="KB_Nvt3nDz9B9" text="国境が完全に不透明になるカメラの高度です。[デフォルト: 500]" />
+		<string id="KB_tSWvnFByJ5" text="国境が見え始めるカメラの高度です。値が小さいほど、よりズームインした時に国境が表示されるようになります。[デフォルト: 30]" />
+		<string id="KB_Nvt3nDz9B9" text="国境が完全に不透明になるカメラの高度です。[デフォルト: 300]" />
 		<string id="KB_sgyNhjlxl4" text="国境の表示/非表示を切り替えるキーです。[デフォルト: M]" />
 		<string id="KB_rZKzD08uWg" text="各王国の国境線の幅（ワールド単位）。[デフォルト: 1.05]" />
 		<string id="KB_esaK0vgYFX" text="隣接する2つの王国の国境線間の隙間です。[デフォルト: 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="地形の表面から国境をどれだけ浮かすか。国境が山に埋もれる場合は増やしてください。[デフォルト: 0.55]" />
 		<string id="KB_rKUsLbE1lp" text="水面上に国境を描画します。[デフォルト: 無効]" />
-		<string id="KB_99NOgT2Y0n" text="" />
-		<!-- {=KB_99NOgT2Y0n} -->
-		<string id="KB_GG5BW78w88" text="" />
-		<!-- {=KB_GG5BW78w88} -->
-		<string id="KB_r5mBKIWelk" text="" />
-		<!-- {=KB_r5mBKIWelk} -->
-		<string id="KB_Y0GmZgp0H3" text="" />
-		<!-- {=KB_Y0GmZgp0H3} -->
-		<string id="KB_mvcbyndDid" text="" />
-		<!-- {=KB_mvcbyndDid} -->
-		<string id="KB_Xsi6Fl5Zp6" text="" />
-		<!-- {=KB_Xsi6Fl5Zp6} -->
-		<string id="KB_GEvl58fFtW" text="" />
-		<!-- {=KB_GEvl58fFtW} -->
-		<string id="KB_wwDe4tfLC8" text="" />
-		<!-- {=KB_wwDe4tfLC8} -->
-		<string id="KB_CbldHPbEzw" text="" />
-		<!-- {=KB_CbldHPbEzw} -->
+		<string id="KB_99NOgT2Y0n" text="パフォーマンス" />
+		<string id="KB_GG5BW78w88" text="グリッド解像度" />
+		<string id="KB_r5mBKIWelk" text="国境の計算に使用される領土グリッドの解像度です。値を高くするとより精密な国境になりますが、再構築時のパフォーマンスが低下します。[デフォルト: 150]" />
+		<string id="KB_Y0GmZgp0H3" text="デバッグログを有効にする" />
+		<string id="KB_mvcbyndDid" text="Configsフォルダ内のKingdomBorders.logに詳細な診断情報を書き込みます。不要なディスク書き込みを避けるには無効にしてください。[デフォルト: 無効]" />
+		<string id="KB_Xsi6Fl5Zp6" text="コーナースムージング" />
+		<string id="KB_GEvl58fFtW" text="国境の角に適用される平滑化の反復回数です。値を高くするとカーブが滑らかになりますが、ジオメトリと再構築コストが増加します。[デフォルト: 3]" />
 	</strings>
 </base>

@@ -15,30 +15,19 @@
 		<string id="KB_44YGFjBRwD" text="Odstęp między granicami" />
 		<string id="KB_iQDKtjjGgA" text="Przesunięcie wysokości" />
 		<string id="KB_dd8z7WavCY" text="Pokaż granice na wodzie" />
-		<string id="KB_tSWvnFByJ5" text="Wysokość kamery, przy której granice zaczynają być widoczne. Niższe wartości sprawiają, że granice pojawiają się przy większym przybliżeniu. [Domyślnie: 40]" />
-		<string id="KB_Nvt3nDz9B9" text="Wysokość kamery, przy której granice osiągają pełną nieprzezroczystość. [Domyślnie: 500]" />
+		<string id="KB_tSWvnFByJ5" text="Wysokość kamery, przy której granice zaczynają być widoczne. Niższe wartości sprawiają, że granice pojawiają się przy większym przybliżeniu. [Domyślnie: 30]" />
+		<string id="KB_Nvt3nDz9B9" text="Wysokość kamery, przy której granice osiągają pełną nieprzezroczystość. [Domyślnie: 300]" />
 		<string id="KB_sgyNhjlxl4" text="Klawisz do włączania i wyłączania widoczności granic. [Domyślnie: M]" />
 		<string id="KB_rZKzD08uWg" text="Szerokość paska granicznego każdego królestwa w jednostkach świata. [Domyślnie: 1.05]" />
 		<string id="KB_esaK0vgYFX" text="Odstęp między dwoma sąsiadującymi paskami granicznymi królestw. [Domyślnie: 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="Jak wysoko nad powierzchnią terenu jest uniesiona granica. Zwiększ, jeśli granice znikają w górach. [Domyślnie: 0.55]" />
 		<string id="KB_rKUsLbE1lp" text="Renderuje granice na powierzchniach wody. [Domyślnie: wyłączone]" />
-		<string id="KB_99NOgT2Y0n" text="" />
-		<!-- {=KB_99NOgT2Y0n} -->
-		<string id="KB_GG5BW78w88" text="" />
-		<!-- {=KB_GG5BW78w88} -->
-		<string id="KB_r5mBKIWelk" text="" />
-		<!-- {=KB_r5mBKIWelk} -->
-		<string id="KB_Y0GmZgp0H3" text="" />
-		<!-- {=KB_Y0GmZgp0H3} -->
-		<string id="KB_mvcbyndDid" text="" />
-		<!-- {=KB_mvcbyndDid} -->
-		<string id="KB_Xsi6Fl5Zp6" text="" />
-		<!-- {=KB_Xsi6Fl5Zp6} -->
-		<string id="KB_GEvl58fFtW" text="" />
-		<!-- {=KB_GEvl58fFtW} -->
-		<string id="KB_wwDe4tfLC8" text="" />
-		<!-- {=KB_wwDe4tfLC8} -->
-		<string id="KB_CbldHPbEzw" text="" />
-		<!-- {=KB_CbldHPbEzw} -->
+		<string id="KB_99NOgT2Y0n" text="Wydajność" />
+		<string id="KB_GG5BW78w88" text="Rozdzielczość siatki" />
+		<string id="KB_r5mBKIWelk" text="Rozdzielczość siatki terytorialnej używanej do obliczania granic. Wyższe wartości dają bardziej precyzyjne granice kosztem wydajności podczas przebudowy. [Domyślnie: 150]" />
+		<string id="KB_Y0GmZgp0H3" text="Włącz rejestrowanie debugowania" />
+		<string id="KB_mvcbyndDid" text="Zapisuje szczegółowe informacje diagnostyczne do pliku KingdomBorders.log w folderze Configs. Wyłącz, aby uniknąć niepotrzebnych zapisów na dysk. [Domyślnie: wyłączone]" />
+		<string id="KB_Xsi6Fl5Zp6" text="Wygładzanie narożników" />
+		<string id="KB_GEvl58fFtW" text="Liczba iteracji wygładzania stosowanych do narożników granicy. Wyższe wartości dają gładsze krzywe, ale zwiększają geometrię i koszt przebudowy. [Domyślnie: 3]" />
 	</strings>
 </base>

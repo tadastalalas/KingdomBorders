@@ -15,30 +15,19 @@
 		<string id="KB_44YGFjBRwD" text="邊界間隙" />
 		<string id="KB_iQDKtjjGgA" text="高度偏移" />
 		<string id="KB_dd8z7WavCY" text="在水面上顯示邊界" />
-		<string id="KB_tSWvnFByJ5" text="邊界開始變得可見的鏡頭高度。數值越低，鏡頭需拉得越近才會顯示邊界。[預設值：40]" />
-		<string id="KB_Nvt3nDz9B9" text="邊界達到完全不透明情況時的鏡頭高度。[預設值：500]" />
+		<string id="KB_tSWvnFByJ5" text="邊界開始變得可見的鏡頭高度。數值越低，鏡頭需拉得越近才會顯示邊界。[預設值：30]" />
+		<string id="KB_Nvt3nDz9B9" text="邊界達到完全不透明情況時的鏡頭高度。[預設值：300]" />
 		<string id="KB_sgyNhjlxl4" text="開啟或關閉邊界可見性的快捷鍵。[預設值：M]" />
 		<string id="KB_rZKzD08uWg" text="每個王國邊界帶的寬度（以世界單位計）。[預設值：1.05]" />
 		<string id="KB_esaK0vgYFX" text="兩個相鄰王國邊界帶之間的間隙。[預設值：0.30]" />
 		<string id="KB_r5gC0YQqcu" text="邊界懸浮在地形表面上方的高度。如果邊界陷入山地中，請增大此值。[預設值：0.55]" />
 		<string id="KB_rKUsLbE1lp" text="在水面上渲染邊界。[預設：已關閉]" />
-		<string id="KB_99NOgT2Y0n" text="" />
-		<!-- {=KB_99NOgT2Y0n} -->
-		<string id="KB_GG5BW78w88" text="" />
-		<!-- {=KB_GG5BW78w88} -->
-		<string id="KB_r5mBKIWelk" text="" />
-		<!-- {=KB_r5mBKIWelk} -->
-		<string id="KB_Y0GmZgp0H3" text="" />
-		<!-- {=KB_Y0GmZgp0H3} -->
-		<string id="KB_mvcbyndDid" text="" />
-		<!-- {=KB_mvcbyndDid} -->
-		<string id="KB_Xsi6Fl5Zp6" text="" />
-		<!-- {=KB_Xsi6Fl5Zp6} -->
-		<string id="KB_GEvl58fFtW" text="" />
-		<!-- {=KB_GEvl58fFtW} -->
-		<string id="KB_wwDe4tfLC8" text="" />
-		<!-- {=KB_wwDe4tfLC8} -->
-		<string id="KB_CbldHPbEzw" text="" />
-		<!-- {=KB_CbldHPbEzw} -->
+		<string id="KB_99NOgT2Y0n" text="效能" />
+		<string id="KB_GG5BW78w88" text="網格解析度" />
+		<string id="KB_r5mBKIWelk" text="用於計算邊界的領土網格解析度。數值越高，邊界越精確，但重建效能會降低。[預設值：150]" />
+		<string id="KB_Y0GmZgp0H3" text="啟用偵錯記錄" />
+		<string id="KB_mvcbyndDid" text="將詳細的診斷資訊寫入 Configs 資料夾中的 KingdomBorders.log。停用可避免不必要的磁碟寫入。[預設：已關閉]" />
+		<string id="KB_Xsi6Fl5Zp6" text="轉角平滑" />
+		<string id="KB_GEvl58fFtW" text="套用於邊界轉角的平滑迭代次數。數值越高，曲線越平滑，但會增加幾何複雜度與重建成本。[預設值：3]" />
 	</strings>
 </base>

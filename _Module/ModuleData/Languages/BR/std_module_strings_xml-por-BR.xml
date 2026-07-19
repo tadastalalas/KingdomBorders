@@ -15,30 +15,19 @@
 		<string id="KB_44YGFjBRwD" text="Espaçamento da Fronteira" />
 		<string id="KB_iQDKtjjGgA" text="Deslocamento de Altura" />
 		<string id="KB_dd8z7WavCY" text="Mostrar Fronteiras na Água" />
-		<string id="KB_tSWvnFByJ5" text="Altura da câmera na qual as fronteiras começam a se tornar visíveis. Valores menores fazem as fronteiras aparecerem com o zoom mais próximo. [Padrão: 40]" />
-		<string id="KB_Nvt3nDz9B9" text="Altura da câmera na qual as fronteiras atingem opacidade total. [Padrão: 500]" />
+		<string id="KB_tSWvnFByJ5" text="Altura da câmera na qual as fronteiras começam a se tornar visíveis. Valores menores fazem as fronteiras aparecerem com o zoom mais próximo. [Padrão: 30]" />
+		<string id="KB_Nvt3nDz9B9" text="Altura da câmera na qual as fronteiras atingem opacidade total. [Padrão: 300]" />
 		<string id="KB_sgyNhjlxl4" text="Tecla para ativar ou desativar a visibilidade das fronteiras. [Padrão: M]" />
 		<string id="KB_rZKzD08uWg" text="Largura de cada faixa de fronteira do reino em unidades locais. [Padrão: 1.05]" />
 		<string id="KB_esaK0vgYFX" text="Espaçamento entre duas faixas de fronteiras de reinos adjacentes. [Padrão: 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="A que distância acima da superfície do terreno a fronteira é elevada. Aumente se as fronteiras se esconderem dentro das montanhas. [Padrão: 0.55]" />
 		<string id="KB_rKUsLbE1lp" text="Renderiza as fronteiras sobre superfícies de água. [Padrão: desativado]" />
-		<string id="KB_99NOgT2Y0n" text="" />
-		<!-- {=KB_99NOgT2Y0n} -->
-		<string id="KB_GG5BW78w88" text="" />
-		<!-- {=KB_GG5BW78w88} -->
-		<string id="KB_r5mBKIWelk" text="" />
-		<!-- {=KB_r5mBKIWelk} -->
-		<string id="KB_Y0GmZgp0H3" text="" />
-		<!-- {=KB_Y0GmZgp0H3} -->
-		<string id="KB_mvcbyndDid" text="" />
-		<!-- {=KB_mvcbyndDid} -->
-		<string id="KB_Xsi6Fl5Zp6" text="" />
-		<!-- {=KB_Xsi6Fl5Zp6} -->
-		<string id="KB_GEvl58fFtW" text="" />
-		<!-- {=KB_GEvl58fFtW} -->
-		<string id="KB_wwDe4tfLC8" text="" />
-		<!-- {=KB_wwDe4tfLC8} -->
-		<string id="KB_CbldHPbEzw" text="" />
-		<!-- {=KB_CbldHPbEzw} -->
+		<string id="KB_99NOgT2Y0n" text="Desempenho" />
+		<string id="KB_GG5BW78w88" text="Resolução da Grade" />
+		<string id="KB_r5mBKIWelk" text="Resolução da grade de território usada para calcular as fronteiras. Valores mais altos produzem fronteiras mais precisas ao custo do desempenho durante a reconstrução. [Padrão: 150]" />
+		<string id="KB_Y0GmZgp0H3" text="Ativar Registro de Depuração" />
+		<string id="KB_mvcbyndDid" text="Grava informações de diagnóstico detalhadas em KingdomBorders.log na pasta Configs. Desative para evitar escritas em disco desnecessárias. [Padrão: desativado]" />
+		<string id="KB_Xsi6Fl5Zp6" text="Suavização de Cantos" />
+		<string id="KB_GEvl58fFtW" text="Número de iterações de suavização aplicadas aos cantos da fronteira. Valores mais altos produzem curvas mais suaves, mas aumentam a geometria e o custo de reconstrução. [Padrão: 3]" />
 	</strings>
 </base>

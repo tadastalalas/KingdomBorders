@@ -302,7 +302,6 @@ namespace KingdomBorders
             return (int)Math.Round(v * 100f);
         }
 
-        // REPLACE the existing UpdateAlphaForCameraDistance method with this
         public void UpdateAlphaForCameraDistance(float cameraDistance, bool isVisible)
         {
             float alpha = 0f;
