@@ -15,30 +15,19 @@
 		<string id="KB_44YGFjBRwD" text="Espacement des frontières" />
 		<string id="KB_iQDKtjjGgA" text="Décalage vertical" />
 		<string id="KB_dd8z7WavCY" text="Afficher les frontières sur l'eau" />
-		<string id="KB_tSWvnFByJ5" text="Hauteur de la caméra à laquelle les frontières commencent à devenir visibles. Des valeurs plus basses font apparaître les frontières en zoomant de plus près. [Défaut : 40]" />
-		<string id="KB_Nvt3nDz9B9" text="Hauteur de la caméra à laquelle les frontières atteignent l'opacité totale. [Défaut : 500]" />
+		<string id="KB_tSWvnFByJ5" text="Hauteur de la caméra à laquelle les frontières commencent à devenir visibles. Des valeurs plus basses font apparaître les frontières en zoomant de plus près. [Défaut : 30]" />
+		<string id="KB_Nvt3nDz9B9" text="Hauteur de la caméra à laquelle les frontières atteignent l'opacité totale. [Défaut : 300]" />
 		<string id="KB_sgyNhjlxl4" text="Touche pour activer/désactiver la visibilité des frontières. [Défaut : M]" />
 		<string id="KB_rZKzD08uWg" text="Largeur de la bande frontalière de chaque royaume en unités du monde. [Défaut : 1.05]" />
 		<string id="KB_esaK0vgYFX" text="Écart entre deux bandes frontalières de royaumes adjacents. [Défaut : 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="À quelle hauteur au-dessus de la surface du terrain la frontière est surélevée. Augmentez la valeur si les frontières disparaissent dans les montagnes. [Défaut : 0.55]" />
 		<string id="KB_rKUsLbE1lp" text="Affiche les frontières sur les surfaces d'eau. [Défaut : désactivé]" />
-		<string id="KB_99NOgT2Y0n" text="" />
-		<!-- {=KB_99NOgT2Y0n} -->
-		<string id="KB_GG5BW78w88" text="" />
-		<!-- {=KB_GG5BW78w88} -->
-		<string id="KB_r5mBKIWelk" text="" />
-		<!-- {=KB_r5mBKIWelk} -->
-		<string id="KB_Y0GmZgp0H3" text="" />
-		<!-- {=KB_Y0GmZgp0H3} -->
-		<string id="KB_mvcbyndDid" text="" />
-		<!-- {=KB_mvcbyndDid} -->
-		<string id="KB_Xsi6Fl5Zp6" text="" />
-		<!-- {=KB_Xsi6Fl5Zp6} -->
-		<string id="KB_GEvl58fFtW" text="" />
-		<!-- {=KB_GEvl58fFtW} -->
-		<string id="KB_wwDe4tfLC8" text="" />
-		<!-- {=KB_wwDe4tfLC8} -->
-		<string id="KB_CbldHPbEzw" text="" />
-		<!-- {=KB_CbldHPbEzw} -->
+		<string id="KB_99NOgT2Y0n" text="Performance" />
+		<string id="KB_GG5BW78w88" text="Résolution de la grille" />
+		<string id="KB_r5mBKIWelk" text="Résolution de la grille de territoire utilisée pour calculer les frontières. Des valeurs plus élevées produisent des frontières plus précises au prix des performances lors de la reconstruction. [Défaut : 150]" />
+		<string id="KB_Y0GmZgp0H3" text="Activer la journalisation de débogage" />
+		<string id="KB_mvcbyndDid" text="Écrit des informations de diagnostic détaillées dans KingdomBorders.log, dans le dossier Configs. Désactivez pour éviter des écritures disque inutiles. [Défaut : désactivé]" />
+		<string id="KB_Xsi6Fl5Zp6" text="Lissage des angles" />
+		<string id="KB_GEvl58fFtW" text="Nombre d'itérations de lissage appliquées aux angles des frontières. Des valeurs plus élevées produisent des courbes plus lisses mais augmentent la géométrie et le coût de reconstruction. [Défaut : 3]" />
 	</strings>
 </base>

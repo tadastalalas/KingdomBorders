@@ -9,9 +9,11 @@
     <Nullable>enable</Nullable>
     <BuildForWindows>false</BuildForWindows>
     <BuildForWindowsStore>false</BuildForWindowsStore>
-    <ModuleId>$(MSBuildProjectName)</ModuleId>
-    <ModuleName>$(MSBuildProjectName)</ModuleName>
-    <ModuleUrl></ModuleUrl>
+    <AssemblyName>KingdomBorders</AssemblyName>
+    <RootNamespace>KingdomBorders</RootNamespace>
+    <ModuleId>KingdomBorders</ModuleId>
+    <ModuleName>Kingdom Borders</ModuleName>
+    <ModuleUrl>https://www.nexusmods.com/mountandblade2bannerlord/mods/10699</ModuleUrl>
     <GameFolder>$(BANNERLORD_GAME_DIR)</GameFolder>
     <GameBinariesFolder Condition="Exists('$(GameFolder)\bin\Win64_Shipping_Client\Bannerlord.exe')">Win64_Shipping_Client</GameBinariesFolder>
     <GameBinariesFolder Condition="Exists('$(GameFolder)\bin\Gaming.Desktop.x64_Shipping_Client\Bannerlord.exe')">Gaming.Desktop.x64_Shipping_Client</GameBinariesFolder>

@@ -68,16 +68,6 @@ namespace KingdomBorders
     }
 
     /// <summary>
-    /// Pre-cached settlement data to avoid repeated property lookups during grid building.
-    /// </summary>
-    internal struct SettlementEntry
-    {
-        public float X;
-        public float Y;
-        public Kingdom Kingdom;
-    }
-
-    /// <summary>
     /// Represents a disconnected territory blob (exclave) that has been separated
     /// from the main grid so its borders can be drawn as a clean closed loop.
     /// </summary>
@@ -135,6 +125,9 @@ namespace KingdomBorders
             _gridResolution = resolution;
         }
         
+        /// <summary>
+        /// Pre-cached settlement data to avoid repeated property lookups during grid building.
+        /// </summary>
         internal struct SettlementEntry
         {
             public float X;
@@ -391,31 +384,89 @@ namespace KingdomBorders
             return false;
         }
 
-        public bool RebuildTerritoryGridForKingdoms(HashSet<Kingdom> affectedKingdoms)
+                public bool RebuildTerritoryGridForKingdoms(HashSet<Kingdom> affectedKingdoms)
         {
-            if (_territoryGrid == null)
+            if (_territoryGrid == null || affectedKingdoms == null || affectedKingdoms.Count == 0)
                 return false;
 
-            HasLastRebuildBounds = false; // Whole-grid rebuild — no partial AABB applies.
+            HasLastRebuildBounds = false;
 
             // Restore exclave-overwritten cells so the fresh DetectAndSeparateExclaves
             // pass at the end can re-discover all exclaves from clean grid data.
             RestoreExclaveCells();
 
-            // Rebuild cache to pick up new ownership
-            BuildSettlementCache();
-
-            bool anyChanged = false;
-            float mapW = _mapMax.x - _mapMin.x;
-            float mapH = _mapMax.y - _mapMin.y;
-            float invResX = 1f / (_gridResolution - 1);
-            float invResY = 1f / (_gridResolution - 1);
+            // "Before" footprint: cells still assigned to an affected kingdom, read before the
+            // rebuild loop below overwrites anything.
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minY = float.MaxValue, maxY = float.MinValue;
+            bool anyFootprint = false;
 
             for (int x = 0; x < _gridResolution; x++)
             {
+                for (int y = 0; y < _gridResolution; y++)
+                {
+                    if (!affectedKingdoms.Contains(_territoryGrid[x, y]))
+                        continue;
+
+                    Vec2 world = GridToWorld(x, y);
+                    if (world.x < minX) minX = world.x;
+                    if (world.x > maxX) maxX = world.x;
+                    if (world.y < minY) minY = world.y;
+                    if (world.y > maxY) maxY = world.y;
+                    anyFootprint = true;
+                }
+            }
+
+            // Rebuild cache to pick up new ownership
+            BuildSettlementCache();
+            // _spatialBuckets intentionally kept alive for reuse by the next partial regen.
+
+            // "After" footprint: settlements the affected kingdoms currently own.
+            for (int i = 0; i < _settlementCache.Length; i++)
+            {
+                ref SettlementEntry entry = ref _settlementCache[i];
+                if (!affectedKingdoms.Contains(entry.Kingdom))
+                    continue;
+
+                if (entry.X < minX) minX = entry.X;
+                if (entry.X > maxX) maxX = entry.X;
+                if (entry.Y < minY) minY = entry.Y;
+                if (entry.Y > maxY) maxY = entry.Y;
+                anyFootprint = true;
+            }
+
+            if (!anyFootprint)
+                return false; // Affected kingdoms have no old or new territory anywhere.
+
+            // No per-settlement neighbor distance available here (unlike RebuildTerritoryGridAroundSettlements) — a generous flat margin instead.
+            const float margin = 40f;
+            minX -= margin;
+            minY -= margin;
+            maxX += margin;
+            maxY += margin;
+
+            LastRebuildMinX = minX;
+            LastRebuildMinY = minY;
+            LastRebuildMaxX = maxX;
+            LastRebuildMaxY = maxY;
+            HasLastRebuildBounds = true;
+
+            float mapW = _mapMax.x - _mapMin.x;
+            float mapH = _mapMax.y - _mapMin.y;
+            int gridMinX = Math.Max(0, (int)(((minX - _mapMin.x) / mapW) * (_gridResolution - 1)));
+            int gridMaxX = Math.Min(_gridResolution - 1, (int)(((maxX - _mapMin.x) / mapW) * (_gridResolution - 1)));
+            int gridMinY = Math.Max(0, (int)(((minY - _mapMin.y) / mapH) * (_gridResolution - 1)));
+            int gridMaxY = Math.Min(_gridResolution - 1, (int)(((maxY - _mapMin.y) / mapH) * (_gridResolution - 1)));
+
+            bool anyChanged = false;
+            float invResX = 1f / (_gridResolution - 1);
+            float invResY = 1f / (_gridResolution - 1);
+
+            for (int x = gridMinX; x <= gridMaxX; x++)
+            {
                 float worldX = _mapMin.x + (x * invResX) * mapW;
 
-                for (int y = 0; y < _gridResolution; y++)
+                for (int y = gridMinY; y <= gridMaxY; y++)
                 {
                     float worldY = _mapMin.y + (y * invResY) * mapH;
                     Kingdom newKingdom = FindNearestKingdom(worldX, worldY);
@@ -428,9 +479,7 @@ namespace KingdomBorders
                 }
             }
 
-            // _spatialBuckets intentionally kept alive for reuse by the next partial regen.
-
-            // Re-detect exclaves after grid rebuild
+            // Re-detect exclaves after partial rebuild
             DetectAndSeparateExclaves();
 
             return anyChanged;
