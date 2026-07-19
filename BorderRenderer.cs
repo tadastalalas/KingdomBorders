@@ -7,25 +7,21 @@ using TaleWorlds.Library;
 
 namespace KingdomBorders
 {
-    /// <summary>
-    /// Tracks a rendered border entity so it can be selectively removed per-kingdom
-    /// and matched against newly generated strips by identity for AABB-based diff rebuilding.
-    /// </summary>
     public class BorderEntityEntry
     {
         public GameEntity Entity;
         public Kingdom Kingdom;
 
-        // 2D world-space AABB of the strip (used by the diff logic).
         public float MinX;
         public float MinY;
         public float MaxX;
         public float MaxY;
 
-        // Stable hash over kingdom + quantized endpoint positions so we can
-        // match "same strip" across rebuilds and skip regeneration when the
-        // geometry didn't actually change.
         public long IdentityKey;
+
+        // Set while queued in a chunked clear pass. Lets ContinueClearing() purge everything
+        // that's actually been removed from the scene in one sweep once the queue drains.
+        internal bool PendingRemoval;
     }
 
     /// <summary>
@@ -44,6 +40,8 @@ namespace KingdomBorders
     {
         private readonly Scene _scene;
         private readonly List<BorderEntityEntry> _entries = new List<BorderEntityEntry>();
+        private List<BorderEntityEntry> _pendingRemoval;
+        private int _removalIndex;
 
         // Cached materials — one per hideWater flag value. The flag is stable across
         // a build (MCM changes trigger a full rebuild) and the material itself is
@@ -331,65 +329,106 @@ namespace KingdomBorders
             }
         }
 
-        /// <summary>
-        /// Removes all entries belonging to any of the specified kingdoms whose strip AABB
-        /// intersects the given world-space bounding box. Entries OUTSIDE the box are left
-        /// in the scene and their identity keys are returned so the caller can skip
-        /// re-rendering the equivalent new strips.
+                /// <summary>
+        /// Classifies entries belonging to any of the specified kingdoms whose strip AABB
+        /// intersects the given box. This pass only does cheap float comparisons — it does
+        /// NOT call the native GameEntity.Remove() yet. Entries outside the box are left alone
+        /// and their identity keys returned so the caller can skip re-rendering equivalent new
+        /// strips. Entries inside the box are queued; call ContinueClearing() on subsequent
+        /// ticks to actually remove them.
         /// </summary>
-        public HashSet<long> ClearForKingdomsInBounds(HashSet<Kingdom> kingdoms,
+        public HashSet<long> BeginClearForKingdomsInBounds(HashSet<Kingdom> kingdoms,
             float minX, float minY, float maxX, float maxY)
         {
             var preservedKeys = new HashSet<long>();
-            int removed = 0;
+            var toRemove = new List<BorderEntityEntry>();
 
-            _entries.RemoveAll(entry =>
+            for (int i = 0; i < _entries.Count; i++)
             {
+                var entry = _entries[i];
                 if (!kingdoms.Contains(entry.Kingdom))
-                    return false;
+                    continue;
 
                 bool disjoint = entry.MaxX < minX || entry.MinX > maxX ||
                                 entry.MaxY < minY || entry.MinY > maxY;
 
                 if (!disjoint)
                 {
-                    entry.Entity?.Remove(0);
-                    removed++;
-                    return true;
+                    entry.PendingRemoval = true;
+                    toRemove.Add(entry);
                 }
+                else
+                {
+                    preservedKeys.Add(entry.IdentityKey);
+                }
+            }
 
-                preservedKeys.Add(entry.IdentityKey);
-                return false;
-            });
-
-            ModLog.Log($"AABB cull: removed {removed} intersecting, preserved {preservedKeys.Count} outside " +
+            ModLog.Log($"AABB cull: queued {toRemove.Count} intersecting for removal, preserved {preservedKeys.Count} outside " +
                        $"(kingdoms={kingdoms.Count}, box=({minX:F1},{minY:F1})-({maxX:F1},{maxY:F1}))");
+
+            _pendingRemoval = toRemove;
+            _removalIndex = 0;
 
             return preservedKeys;
         }
 
         /// <summary>
-        /// Removes all entries that involve any of the specified kingdoms.
+        /// Classifies all entries involving any of the specified kingdoms for removal.
+        /// Like BeginClearForKingdomsInBounds, only queues them — call ContinueClearing() to
+        /// perform the actual native removals across subsequent ticks.
         /// </summary>
-        public void ClearForKingdoms(HashSet<Kingdom> kingdoms)
+        public void BeginClearForKingdoms(HashSet<Kingdom> kingdoms)
         {
-            int removed = _entries.RemoveAll(entry =>
+            var toRemove = new List<BorderEntityEntry>();
+
+            for (int i = 0; i < _entries.Count; i++)
             {
+                var entry = _entries[i];
                 if (kingdoms.Contains(entry.Kingdom))
                 {
-                    entry.Entity?.Remove(0);
-                    return true;
+                    entry.PendingRemoval = true;
+                    toRemove.Add(entry);
                 }
-                return false;
-            });
+            }
 
-            ModLog.Log($"Cleared {removed} border entities for {kingdoms.Count} kingdoms");
+            ModLog.Log($"Queued {toRemove.Count} border entities for removal ({kingdoms.Count} kingdoms)");
+
+            _pendingRemoval = toRemove;
+            _removalIndex = 0;
+        }
+
+        /// <summary>
+        /// Removes up to maxPerTick queued entities from the scene (the actual native
+        /// GameEntity.Remove() call). Spreads that engine-interop cost across multiple ticks
+        /// instead of paying for every removal in one frame. Returns true once fully drained.
+        /// </summary>
+        public bool ContinueClearing(int maxPerTick)
+        {
+            if (_pendingRemoval == null)
+                return true;
+
+            int end = Math.Min(_removalIndex + maxPerTick, _pendingRemoval.Count);
+            for (int i = _removalIndex; i < end; i++)
+            {
+                _pendingRemoval[i].Entity?.Remove(0);
+            }
+            _removalIndex = end;
+
+            if (_removalIndex < _pendingRemoval.Count)
+                return false;
+
+            _entries.RemoveAll(e => e.PendingRemoval);
+            _pendingRemoval = null;
+            _removalIndex = 0;
+            return true;
         }
 
         public void ClearAll()
         {
             foreach (var entry in _entries) entry.Entity?.Remove(0);
             _entries.Clear();
+            _pendingRemoval = null;
+            _removalIndex = 0;
         }
 
         public int EntityCount => _entries.Count;

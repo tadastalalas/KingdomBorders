@@ -112,6 +112,7 @@ namespace KingdomBorders
             _borderBehavior = null;
             _lastHotkeyString = null;
             _parsedKey = InputKey.Invalid;
+            ModLog.Close();
         }
     }
 }

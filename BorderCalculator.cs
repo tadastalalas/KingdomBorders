@@ -116,6 +116,10 @@ namespace KingdomBorders
         // exclave pass, which knows the true neighbour kingdom) and lets the exclave
         // pass resolve a neighbour cell that happens to belong to another blob.
         private Dictionary<long, Kingdom> _blobCellMap;
+        
+        // Reused across DetectAndSeparateExclaves calls to avoid a fresh 150x150 (22,500-element)
+        // allocation on every single regen — that method runs unconditionally on every ownership change.
+        private bool[,] _exclaveVisitedBuffer;
 
         // Bounds of the region rebuilt by the last partial grid update, in world-space.
         // Used by the behavior's AABB-diff logic to preserve strips outside this region.
@@ -129,6 +133,17 @@ namespace KingdomBorders
         public BorderCalculator(int resolution = 150)
         {
             _gridResolution = resolution;
+        }
+        
+        internal struct SettlementEntry
+        {
+            public float X;
+            public float Y;
+            public Kingdom Kingdom;
+
+            // Identity of the settlement this entry represents, so PatchSettlementCacheForSettlements
+            // can find and update one entry's Kingdom in place without rebuilding the whole cache.
+            public Settlement Settlement;
         }
 
         public void CalculateMapBounds()
@@ -156,17 +171,14 @@ namespace KingdomBorders
             ModLog.Log($"Map bounds: ({_mapMin.x:F2}, {_mapMin.y:F2}) to ({_mapMax.x:F2}, {_mapMax.y:F2})");
         }
 
-        /// <summary>
-        /// Builds a flat cache of settlement positions and kingdoms, and a coarse spatial
-        /// lookup grid so each territory cell only needs to compare against nearby settlements.
-        /// </summary>
         private void BuildSettlementCache()
         {
             var fiefs = Settlement.All
                 .Where(s => s.IsTown || s.IsCastle || s.IsVillage)
                 .ToList();
 
-            _settlementCache = new SettlementEntry[fiefs.Count];
+            if (_settlementCache == null || _settlementCache.Length != fiefs.Count)
+                _settlementCache = new SettlementEntry[fiefs.Count];
 
             for (int i = 0; i < fiefs.Count; i++)
             {
@@ -182,7 +194,8 @@ namespace KingdomBorders
                 {
                     X = pos.x,
                     Y = pos.y,
-                    Kingdom = kingdom
+                    Kingdom = kingdom,
+                    Settlement = s
                 };
             }
 
@@ -192,10 +205,19 @@ namespace KingdomBorders
             _bucketCellW = mapW / SpatialBucketRes;
             _bucketCellH = mapH / SpatialBucketRes;
 
-            _spatialBuckets = new List<int>[SpatialBucketRes, SpatialBucketRes];
-            for (int bx = 0; bx < SpatialBucketRes; bx++)
-                for (int by = 0; by < SpatialBucketRes; by++)
-                    _spatialBuckets[bx, by] = new List<int>();
+            if (_spatialBuckets == null)
+            {
+                _spatialBuckets = new List<int>[SpatialBucketRes, SpatialBucketRes];
+                for (int bx = 0; bx < SpatialBucketRes; bx++)
+                    for (int by = 0; by < SpatialBucketRes; by++)
+                        _spatialBuckets[bx, by] = new List<int>();
+            }
+            else
+            {
+                for (int bx = 0; bx < SpatialBucketRes; bx++)
+                    for (int by = 0; by < SpatialBucketRes; by++)
+                        _spatialBuckets[bx, by].Clear();
+            }
 
             // Insert each settlement into its bucket and all neighboring buckets
             // so that edge cells can still find the nearest settlement across bucket boundaries
@@ -206,7 +228,6 @@ namespace KingdomBorders
                 bx = Math.Max(0, Math.Min(SpatialBucketRes - 1, bx));
                 by = Math.Max(0, Math.Min(SpatialBucketRes - 1, by));
 
-                // Add to a 3x3 neighborhood so border cells always find nearby settlements
                 for (int dx = -1; dx <= 1; dx++)
                 {
                     for (int dy = -1; dy <= 1; dy++)
@@ -220,6 +241,48 @@ namespace KingdomBorders
             }
 
             ModLog.Log($"Settlement cache: {_settlementCache.Length} entries, {SpatialBucketRes}x{SpatialBucketRes} spatial grid");
+        }
+
+        /// <summary>
+        /// Updates only the Kingdom field of the given settlements' existing cache entries, in
+        /// place, without rebuilding the array or spatial buckets. Positions never change and
+        /// bucket membership depends only on position, so a full BuildSettlementCache() call
+        /// (LINQ scan over every settlement in the campaign + full bucket rebuild) is unnecessary
+        /// when ownership is the only thing that changed. Falls back to a full rebuild if the
+        /// cache/buckets don't exist yet, or a settlement can't be found (e.g. it didn't exist
+        /// when the cache was last built — such as one created at runtime by another mod).
+        /// </summary>
+        private void PatchSettlementCacheForSettlements(HashSet<Settlement> changedSettlements)
+        {
+            if (_settlementCache == null || _spatialBuckets == null)
+            {
+                BuildSettlementCache();
+                return;
+            }
+
+            foreach (var changed in changedSettlements)
+            {
+                bool found = false;
+                for (int i = 0; i < _settlementCache.Length; i++)
+                {
+                    if (_settlementCache[i].Settlement != changed)
+                        continue;
+
+                    Kingdom kingdom = changed.IsVillage
+                        ? changed.Village.Bound?.OwnerClan?.Kingdom
+                        : changed.OwnerClan?.Kingdom;
+
+                    _settlementCache[i].Kingdom = kingdom;
+                    found = true;
+                    break;
+                }
+
+                if (!found)
+                {
+                    BuildSettlementCache();
+                    return;
+                }
+            }
         }
 
         /// <summary>
@@ -315,7 +378,8 @@ namespace KingdomBorders
             if (_gridBuildRow >= _gridResolution)
             {
                 _gridBuildComplete = true;
-                _spatialBuckets = null; // Free memory
+                // _spatialBuckets intentionally kept alive — reused by PatchSettlementCacheForSettlements
+                // on the next partial regen instead of being rebuilt from scratch every time.
                 ModLog.Log("Territory grid build complete");
 
                 // Detect and fix exclaves immediately after grid is complete
@@ -364,7 +428,7 @@ namespace KingdomBorders
                 }
             }
 
-            _spatialBuckets = null; // Free memory
+            // _spatialBuckets intentionally kept alive for reuse by the next partial regen.
 
             // Re-detect exclaves after grid rebuild
             DetectAndSeparateExclaves();
@@ -390,8 +454,10 @@ namespace KingdomBorders
             // pass at the end can re-discover all exclaves from clean grid data.
             RestoreExclaveCells();
 
-            // Rebuild the settlement cache to pick up new ownership
-            BuildSettlementCache();
+            // Patch only the changed settlements' Kingdom field in place — positions never
+            // change, so a full BuildSettlementCache() rebuild is unnecessary for an
+            // ownership-only change.
+            PatchSettlementCacheForSettlements(changedSettlements);
 
             // Compute bounding box of changed settlements
             float minX = float.MaxValue, maxX = float.MinValue;
@@ -523,7 +589,7 @@ namespace KingdomBorders
                 }
             }
 
-            _spatialBuckets = null; // Free memory
+            // _spatialBuckets intentionally kept alive for reuse by the next partial regen.
 
             int totalCells = _gridResolution * _gridResolution;
             ModLog.Log($"Partial grid rebuild: {cellsUpdated}/{totalCells} cells ({100f * cellsUpdated / totalCells:F1}%), " +
@@ -549,8 +615,14 @@ namespace KingdomBorders
         {
             _exclaveBlobs = new List<ExclaveBlob>();
 
-            // visited[x,y] tracks whether each cell has been flood-filled already
-            bool[,] visited = new bool[_gridResolution, _gridResolution];
+            // visited[x,y] tracks whether each cell has been flood-filled already.
+            // Reused across calls (cleared, not reallocated) since this runs on every regen.
+            if (_exclaveVisitedBuffer == null)
+                _exclaveVisitedBuffer = new bool[_gridResolution, _gridResolution];
+            else
+                Array.Clear(_exclaveVisitedBuffer, 0, _exclaveVisitedBuffer.Length);
+
+            bool[,] visited = _exclaveVisitedBuffer;
 
             // Collect all blobs via flood fill
             var allBlobs = new List<(Kingdom kingdom, List<(int x, int y)> cells)>();
