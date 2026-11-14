@@ -1,0 +1,5 @@
+KB v1.5.7.0 :
+
+- Added kingdom labels when zoomed out, with a hotkey to toggle them on/off.
+- Added smooth kingdom territory tint color transitions when zooming in/out.
+- Built one DLL per supported game version (1.5.7, 1.4.8, 1.4.7).

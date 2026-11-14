@@ -1,0 +1,12 @@
+﻿<Brushes>
+    <Brush Name="KingdomBorders.Label.Name" Font="Galahad">
+        <Styles>
+            <Style Name="Default"  FontColor="#FFFFFFE6" FontSize="45" TextBlur="0" TextOutlineAmount="0.3" TextOutlineColor="#000000FF" TextGlowRadius="0" TextHorizontalAlignment="Center" TextVerticalAlignment="Center" />
+        </Styles>
+    </Brush>
+    <Brush Name="KingdomBorders.Label.Info" Font="Galahad">
+        <Styles>
+            <Style Name="Default" FontColor="#FFFFFFCC" FontSize="20" TextBlur="0" TextOutlineAmount="0.3" TextOutlineColor="#000000FF" TextGlowRadius="0" TextHorizontalAlignment="Center" TextVerticalAlignment="Center" />
+        </Styles>
+    </Brush>
+</Brushes>

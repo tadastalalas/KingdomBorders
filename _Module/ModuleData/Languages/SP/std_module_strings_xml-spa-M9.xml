@@ -17,7 +17,7 @@
 		<string id="KB_dd8z7WavCY" text="Mostrar Fronteras en el Agua" />
 		<string id="KB_tSWvnFByJ5" text="Altura de la cámara en la que las fronteras comienzan a ser visibles. Los valores más bajos hacen que las fronteras aparezcan al acercar la vista. [Predeterminado: 30]" />
 		<string id="KB_Nvt3nDz9B9" text="Altura de la cámara en la que las fronteras alcanzan la opacidad total. [Predeterminado: 300]" />
-		<string id="KB_sgyNhjlxl4" text="Tecla para activar o desactivar la visibilidad de las fronteras. [Predeterminado: M]" />
+		<string id="KB_sgyNhjlxl4" text="Tecla para alternar la vista: desactivado, fronteras, fronteras + tinte de territorio, solo tinte de territorio. Con el Tinte de Territorio desactivado, solo activa o desactiva las fronteras. [Predeterminado: M]" />
 		<string id="KB_rZKzD08uWg" text="Ancho de la franja fronteriza de cada reino en unidades del mundo. [Predeterminado: 1.05]" />
 		<string id="KB_esaK0vgYFX" text="Separación entre dos franjas fronterizas de reinos adyacentes. [Predeterminado: 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="Qué tan por encima de la superficie del terreno se eleva la frontera. Aumenta este valor si las fronteras se ocultan dentro de las montañas. [Predeterminado: 0.55]" />
@@ -26,8 +26,33 @@
 		<string id="KB_GG5BW78w88" text="Resolución de la Cuadrícula" />
 		<string id="KB_r5mBKIWelk" text="Resolución de la cuadrícula de territorio utilizada para calcular las fronteras. Valores más altos producen fronteras más precisas a costa del rendimiento al reconstruir. [Predeterminado: 150]" />
 		<string id="KB_Y0GmZgp0H3" text="Activar Registro de Depuración" />
-		<string id="KB_mvcbyndDid" text="Escribe información de diagnóstico detallada en KingdomBorders.log dentro de la carpeta Configs. Desactívalo para evitar escrituras innecesarias en el disco. [Predeterminado: desactivado]" />
+		<string id="KB_mvcbyndDid" text="Escribe información de diagnóstico detallada en KingdomBorders.log dentro de la carpeta logs de la carpeta del mod. Desactívalo para evitar escrituras innecesarias en el disco. [Predeterminado: desactivado]" />
 		<string id="KB_Xsi6Fl5Zp6" text="Suavizado de Esquinas" />
 		<string id="KB_GEvl58fFtW" text="Número de iteraciones de suavizado aplicadas a las esquinas de la frontera. Valores más altos producen curvas más suaves pero aumentan la geometría y el costo de reconstrucción. [Predeterminado: 3]" />
+		<string id="KB_ModeOff" text="Fronteras: desactivadas" />
+		<string id="KB_ModeOn" text="Fronteras: activadas" />
+		<string id="KB_ModeTint" text="Fronteras: activadas + tinte de territorio" />
+		<string id="KB_ModeTintOnly" text="Solo tinte de territorio" />
+		<string id="KB_LabelInfo" text="{FIEFS} feudos · {CLANS} clanes" />
+		<string id="KB_OnlyPlayer" text="Solo Fronteras del Reino del Jugador" />
+		<string id="KB_OnlyPlayerHint" text="Dibuja solo las fronteras que tu reino comparte con sus vecinos. Se ignora si no tienes reino. [Predeterminado: desactivado]" />
+		<string id="KB_Tint" text="Tinte de Territorio" />
+		<string id="KB_TintHint" text="Relleno de baja resolución con el color de cada reino, visible con la vista muy alejada (alterna con el atajo). [Predeterminado: activado]" />
+		<string id="KB_TintOpacity" text="Opacidad del Tinte de Territorio" />
+		<string id="KB_TintOpacityHint" text="[Predeterminado: 0.15]" />
+		<string id="KB_Labels" text="Etiquetas con el Nombre de los Reinos" />
+		<string id="KB_LabelsHint" text="Muestra el nombre de cada reino y su cantidad de feudos/clanes sobre su territorio al alejar la vista. [Predeterminado: activado]" />
+		<string id="KB_LabelHeight" text="Altura de las Etiquetas" />
+		<string id="KB_LabelHeightHint" text="Altura de la cámara por encima de la cual se muestran las etiquetas de los reinos. Con el Registro de Depuración activado, el mensaje del atajo muestra la altura actual de la cámara. [Predeterminado: 300]" />
+		<string id="KB_TownPlateHeight" text="Ocultar Placas de Ciudades por Encima de" />
+		<string id="KB_TownPlateHeightHint" text="Altura de la cámara por encima de la cual se ocultan las placas de nombre de las ciudades, igual que el juego original oculta las de aldeas/castillos. 0 = nunca. [Predeterminado: 600]" />
+		<string id="KB_Style" text="Estilo de Frontera" />
+		<string id="KB_StyleHint" text="Franjas continuas, discontinuas o punteadas. [Predeterminado: Solid]" />
+		<string id="KB_Emph" text="Destacar el Reino del Jugador" />
+		<string id="KB_EmphHint" text="Las franjas de tu reino son más anchas y brillantes; las demás se atenúan. [Predeterminado: desactivado]" />
+		<string id="KB_War" text="Pulsar Fronteras en Guerra" />
+		<string id="KB_WarHint" text="Las franjas entre reinos en guerra pulsan. [Predeterminado: activado]" />
+		<string id="KB_Glow" text="Resaltar Fronteras Cambiadas Recientemente" />
+		<string id="KB_GlowHint" text="La frontera recién ganada brilla durante un día. [Predeterminado: activado]" />
 	</strings>
 </base>

@@ -1,0 +1,29 @@
+﻿<Prefab>
+    <Constants />
+    <Variables />
+    <VisualDefinitions />
+    <Window>
+        <Widget WidthSizePolicy="StretchToParent" HeightSizePolicy="StretchToParent" DoNotAcceptEvents="true" DoNotPassEventsToChildren="true">
+            <Children>
+                <Widget DataSource="{Labels}" WidthSizePolicy="StretchToParent" HeightSizePolicy="StretchToParent" DoNotAcceptEvents="true" DoNotPassEventsToChildren="true">
+                    <ItemTemplate>
+                        <Widget WidthSizePolicy="CoverChildren" HeightSizePolicy="CoverChildren" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                IsVisible="@IsVisible" ScaledPositionXOffset="@ScreenX" ScaledPositionYOffset="@ScreenY"
+                                Sprite="BlankWhiteSquare_9" Color="#00000040" AlphaFactor="@Alpha" DoNotAcceptEvents="true">
+                            <Children>
+                                <ListPanel WidthSizePolicy="CoverChildren" HeightSizePolicy="CoverChildren" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           MarginLeft="18" MarginRight="18" MarginTop="6" MarginBottom="8"
+                                           StackLayout.LayoutMethod="VerticalBottomToTop" DoNotAcceptEvents="true">
+                                    <Children>
+                                        <TextWidget WidthSizePolicy="CoverChildren" HeightSizePolicy="CoverChildren" HorizontalAlignment="Center" Brush="KingdomBorders.Label.Name" Text="@Name" DoNotAcceptEvents="true" AlphaFactor="@Alpha" />
+                                        <TextWidget WidthSizePolicy="CoverChildren" HeightSizePolicy="CoverChildren" HorizontalAlignment="Center" Brush="KingdomBorders.Label.Info" Text="@Info" DoNotAcceptEvents="true" AlphaFactor="@Alpha" />
+                                    </Children>
+                                </ListPanel>
+                            </Children>
+                        </Widget>
+                    </ItemTemplate>
+                </Widget>
+            </Children>
+        </Widget>
+    </Window>
+</Prefab>

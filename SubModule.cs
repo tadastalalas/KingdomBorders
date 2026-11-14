@@ -1,4 +1,5 @@
 ﻿using System;
+using HarmonyLib;
 using TaleWorlds.CampaignSystem;
 using TaleWorlds.Core;
 using TaleWorlds.InputSystem;
@@ -17,6 +18,14 @@ namespace KingdomBorders
         private bool _needCtrl;
         private bool _needAlt;
         private bool _needShift;
+        
+        protected override void OnSubModuleLoad()
+        {
+            base.OnSubModuleLoad();
+            // Assembly passed explicitly: the no-argument PatchAll() takes it from the call stack, and in an
+            // optimized (Release) build on .NET Framework that is the loader's assembly, so no patch is applied.
+            new Harmony("KingdomBorders").PatchAll(typeof(SubModule).Assembly);
+        }
 
         protected override void OnGameStart(Game game, IGameStarter gameStarterObject)
         {
@@ -44,7 +53,10 @@ namespace KingdomBorders
             if (_borderBehavior.Renderer != null && _borderBehavior.MapScene != null)
             {
                 float cameraHeight = _borderBehavior.MapScene.LastFinalRenderCameraPosition.z;
-                _borderBehavior.Renderer.UpdateAlphaForCameraDistance(cameraHeight, _borderBehavior.IsVisible);
+                Patches.TownNameplatePatch.Update(cameraHeight);
+                _borderBehavior.Renderer.UpdateAlphaForCameraDistance(cameraHeight, _borderBehavior.IsVisible, dt);
+                _borderBehavior.Tint?.UpdateAlphaForCameraDistance(cameraHeight, _borderBehavior.IsTintVisible);
+                _borderBehavior.Labels?.Tick(cameraHeight, _borderBehavior.AreLabelsVisible, dt);
             }
         }
 
@@ -67,9 +79,7 @@ namespace KingdomBorders
             if (_needShift && !Input.IsKeyDown(InputKey.LeftShift) && !Input.IsKeyDown(InputKey.RightShift)) return;
 
             if (Input.IsKeyPressed(_parsedKey))
-            {
-                _borderBehavior.ToggleVisibility();
-            }
+                _borderBehavior.CycleViewMode();
         }
 
         /// <summary>
@@ -110,6 +120,7 @@ namespace KingdomBorders
             base.OnGameEnd(game);
             _borderBehavior?.Cleanup();
             _borderBehavior = null;
+            Patches.TownNameplatePatch.Update(0f);
             _lastHotkeyString = null;
             _parsedKey = InputKey.Invalid;
             ModLog.Close();

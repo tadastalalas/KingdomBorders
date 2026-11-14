@@ -17,7 +17,7 @@
 		<string id="KB_dd8z7WavCY" text="在水面上顯示邊界" />
 		<string id="KB_tSWvnFByJ5" text="邊界開始變得可見的鏡頭高度。數值越低，鏡頭需拉得越近才會顯示邊界。[預設值：30]" />
 		<string id="KB_Nvt3nDz9B9" text="邊界達到完全不透明情況時的鏡頭高度。[預設值：300]" />
-		<string id="KB_sgyNhjlxl4" text="開啟或關閉邊界可見性的快捷鍵。[預設值：M]" />
+		<string id="KB_sgyNhjlxl4" text="切換顯示模式的快捷鍵：關閉、邊界、邊界 + 領土著色、僅領土著色。停用領土著色時，僅開啟或關閉邊界。[預設值：M]" />
 		<string id="KB_rZKzD08uWg" text="每個王國邊界帶的寬度（以世界單位計）。[預設值：1.05]" />
 		<string id="KB_esaK0vgYFX" text="兩個相鄰王國邊界帶之間的間隙。[預設值：0.30]" />
 		<string id="KB_r5gC0YQqcu" text="邊界懸浮在地形表面上方的高度。如果邊界陷入山地中，請增大此值。[預設值：0.55]" />
@@ -26,8 +26,33 @@
 		<string id="KB_GG5BW78w88" text="網格解析度" />
 		<string id="KB_r5mBKIWelk" text="用於計算邊界的領土網格解析度。數值越高，邊界越精確，但重建效能會降低。[預設值：150]" />
 		<string id="KB_Y0GmZgp0H3" text="啟用偵錯記錄" />
-		<string id="KB_mvcbyndDid" text="將詳細的診斷資訊寫入 Configs 資料夾中的 KingdomBorders.log。停用可避免不必要的磁碟寫入。[預設：已關閉]" />
+		<string id="KB_mvcbyndDid" text="將詳細的診斷資訊寫入模組資料夾內 logs 資料夾中的 KingdomBorders.log。停用可避免不必要的磁碟寫入。[預設：已關閉]" />
 		<string id="KB_Xsi6Fl5Zp6" text="轉角平滑" />
 		<string id="KB_GEvl58fFtW" text="套用於邊界轉角的平滑迭代次數。數值越高，曲線越平滑，但會增加幾何複雜度與重建成本。[預設值：3]" />
+		<string id="KB_ModeOff" text="邊界：關閉" />
+		<string id="KB_ModeOn" text="邊界：開啟" />
+		<string id="KB_ModeTint" text="邊界：開啟 + 領土著色" />
+		<string id="KB_ModeTintOnly" text="僅領土著色" />
+		<string id="KB_LabelInfo" text="封地 {FIEFS} · 家族 {CLANS}" />
+		<string id="KB_OnlyPlayer" text="僅顯示玩家王國邊界" />
+		<string id="KB_OnlyPlayerHint" text="僅繪製你的王國與鄰國共有的邊界。如果你沒有王國則忽略此項。[預設：已關閉]" />
+		<string id="KB_Tint" text="領土著色" />
+		<string id="KB_TintHint" text="以各王國顏色進行的低解析度填充，鏡頭拉得很遠時可見（用快捷鍵切換）。[預設：已開啟]" />
+		<string id="KB_TintOpacity" text="領土著色不透明度" />
+		<string id="KB_TintOpacityHint" text="[預設值：0.15]" />
+		<string id="KB_Labels" text="王國名稱標籤" />
+		<string id="KB_LabelsHint" text="鏡頭拉遠時，在各王國領土上方顯示其名稱以及封地/家族數量。[預設：已開啟]" />
+		<string id="KB_LabelHeight" text="標籤高度" />
+		<string id="KB_LabelHeightHint" text="鏡頭高於此高度時顯示王國標籤。啟用偵錯記錄後，快捷鍵提示訊息會顯示目前鏡頭高度。[預設值：300]" />
+		<string id="KB_TownPlateHeight" text="高於此高度時隱藏城鎮名牌" />
+		<string id="KB_TownPlateHeightHint" text="鏡頭高於此高度時隱藏城鎮名牌，與原版隱藏村莊/城堡名牌的方式相同。0 = 從不隱藏。[預設值：600]" />
+		<string id="KB_Style" text="邊界樣式" />
+		<string id="KB_StyleHint" text="實線、虛線或點線邊界帶。[預設值：Solid]" />
+		<string id="KB_Emph" text="突顯玩家王國" />
+		<string id="KB_EmphHint" text="你的王國的邊界帶更寬、更亮；其他邊界帶會變暗淡。[預設：已關閉]" />
+		<string id="KB_War" text="交戰邊界閃爍" />
+		<string id="KB_WarHint" text="交戰王國之間的邊界帶會閃爍。[預設：已開啟]" />
+		<string id="KB_Glow" text="標示最近變動的邊界" />
+		<string id="KB_GlowHint" text="新獲得的邊界會發光一天。[預設：已開啟]" />
 	</strings>
 </base>

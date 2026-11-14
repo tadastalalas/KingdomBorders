@@ -17,7 +17,7 @@
 		<string id="KB_dd8z7WavCY" text="Afficher les frontières sur l'eau" />
 		<string id="KB_tSWvnFByJ5" text="Hauteur de la caméra à laquelle les frontières commencent à devenir visibles. Des valeurs plus basses font apparaître les frontières en zoomant de plus près. [Défaut : 30]" />
 		<string id="KB_Nvt3nDz9B9" text="Hauteur de la caméra à laquelle les frontières atteignent l'opacité totale. [Défaut : 300]" />
-		<string id="KB_sgyNhjlxl4" text="Touche pour activer/désactiver la visibilité des frontières. [Défaut : M]" />
+		<string id="KB_sgyNhjlxl4" text="Touche pour alterner l'affichage : désactivé, frontières, frontières + teinte du territoire, teinte du territoire uniquement. Si la teinte du territoire est désactivée, elle active ou désactive seulement les frontières. [Défaut : M]" />
 		<string id="KB_rZKzD08uWg" text="Largeur de la bande frontalière de chaque royaume en unités du monde. [Défaut : 1.05]" />
 		<string id="KB_esaK0vgYFX" text="Écart entre deux bandes frontalières de royaumes adjacents. [Défaut : 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="À quelle hauteur au-dessus de la surface du terrain la frontière est surélevée. Augmentez la valeur si les frontières disparaissent dans les montagnes. [Défaut : 0.55]" />
@@ -26,8 +26,33 @@
 		<string id="KB_GG5BW78w88" text="Résolution de la grille" />
 		<string id="KB_r5mBKIWelk" text="Résolution de la grille de territoire utilisée pour calculer les frontières. Des valeurs plus élevées produisent des frontières plus précises au prix des performances lors de la reconstruction. [Défaut : 150]" />
 		<string id="KB_Y0GmZgp0H3" text="Activer la journalisation de débogage" />
-		<string id="KB_mvcbyndDid" text="Écrit des informations de diagnostic détaillées dans KingdomBorders.log, dans le dossier Configs. Désactivez pour éviter des écritures disque inutiles. [Défaut : désactivé]" />
+		<string id="KB_mvcbyndDid" text="Écrit des informations de diagnostic détaillées dans KingdomBorders.log, dans le dossier logs du dossier du mod. Désactivez pour éviter des écritures disque inutiles. [Défaut : désactivé]" />
 		<string id="KB_Xsi6Fl5Zp6" text="Lissage des angles" />
 		<string id="KB_GEvl58fFtW" text="Nombre d'itérations de lissage appliquées aux angles des frontières. Des valeurs plus élevées produisent des courbes plus lisses mais augmentent la géométrie et le coût de reconstruction. [Défaut : 3]" />
+		<string id="KB_ModeOff" text="Frontières : désactivées" />
+		<string id="KB_ModeOn" text="Frontières : activées" />
+		<string id="KB_ModeTint" text="Frontières : activées + teinte du territoire" />
+		<string id="KB_ModeTintOnly" text="Teinte du territoire uniquement" />
+		<string id="KB_LabelInfo" text="{FIEFS} fiefs · {CLANS} clans" />
+		<string id="KB_OnlyPlayer" text="Uniquement les frontières du royaume du joueur" />
+		<string id="KB_OnlyPlayerHint" text="Dessine uniquement les frontières que votre royaume partage avec ses voisins. Ignoré si vous n'avez pas de royaume. [Défaut : désactivé]" />
+		<string id="KB_Tint" text="Teinte du territoire" />
+		<string id="KB_TintHint" text="Remplissage basse résolution à la couleur de chaque royaume, visible en dézoomant fortement (alternez avec le raccourci). [Défaut : activé]" />
+		<string id="KB_TintOpacity" text="Opacité de la teinte du territoire" />
+		<string id="KB_TintOpacityHint" text="[Défaut : 0.15]" />
+		<string id="KB_Labels" text="Étiquettes de nom des royaumes" />
+		<string id="KB_LabelsHint" text="Affiche le nom de chaque royaume et son nombre de fiefs/clans au-dessus de son territoire en vue éloignée. [Défaut : activé]" />
+		<string id="KB_LabelHeight" text="Hauteur des étiquettes" />
+		<string id="KB_LabelHeightHint" text="Hauteur de la caméra au-dessus de laquelle les étiquettes des royaumes sont affichées. Avec la journalisation de débogage activée, le message du raccourci indique la hauteur actuelle de la caméra. [Défaut : 300]" />
+		<string id="KB_TownPlateHeight" text="Masquer les plaques des villes au-dessus de" />
+		<string id="KB_TownPlateHeightHint" text="Hauteur de la caméra au-dessus de laquelle les plaques de nom des villes sont masquées, comme le jeu de base masque celles des villages/châteaux. 0 = jamais. [Défaut : 600]" />
+		<string id="KB_Style" text="Style de frontière" />
+		<string id="KB_StyleHint" text="Bandes continues, en tirets ou en pointillés. [Défaut : Solid]" />
+		<string id="KB_Emph" text="Mettre en valeur le royaume du joueur" />
+		<string id="KB_EmphHint" text="Les bandes de votre royaume sont plus larges et plus claires ; les autres sont atténuées. [Défaut : désactivé]" />
+		<string id="KB_War" text="Faire pulser les frontières en guerre" />
+		<string id="KB_WarHint" text="Les bandes entre royaumes en guerre pulsent. [Défaut : activé]" />
+		<string id="KB_Glow" text="Faire briller les frontières récemment modifiées" />
+		<string id="KB_GlowHint" text="Une frontière nouvellement gagnée brille pendant un jour. [Défaut : activé]" />
 	</strings>
 </base>

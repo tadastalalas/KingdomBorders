@@ -111,15 +111,6 @@ namespace KingdomBorders
         // allocation on every single regen — that method runs unconditionally on every ownership change.
         private bool[,] _exclaveVisitedBuffer;
 
-        // Bounds of the region rebuilt by the last partial grid update, in world-space.
-        // Used by the behavior's AABB-diff logic to preserve strips outside this region.
-        // Cleared at the start of a full grid build.
-        public bool HasLastRebuildBounds { get; private set; }
-        public float LastRebuildMinX { get; private set; }
-        public float LastRebuildMinY { get; private set; }
-        public float LastRebuildMaxX { get; private set; }
-        public float LastRebuildMaxY { get; private set; }
-
         public BorderCalculator(int resolution = 150)
         {
             _gridResolution = resolution;
@@ -338,7 +329,6 @@ namespace KingdomBorders
             BuildSettlementCache();
             _gridBuildRow = 0;
             _gridBuildComplete = false;
-            HasLastRebuildBounds = false; // Full rebuild — no partial AABB applies.
         }
 
         /// <summary>
@@ -384,12 +374,10 @@ namespace KingdomBorders
             return false;
         }
 
-                public bool RebuildTerritoryGridForKingdoms(HashSet<Kingdom> affectedKingdoms)
+        public bool RebuildTerritoryGridForKingdoms(HashSet<Kingdom> affectedKingdoms)
         {
             if (_territoryGrid == null || affectedKingdoms == null || affectedKingdoms.Count == 0)
                 return false;
-
-            HasLastRebuildBounds = false;
 
             // Restore exclave-overwritten cells so the fresh DetectAndSeparateExclaves
             // pass at the end can re-discover all exclaves from clean grid data.
@@ -445,12 +433,6 @@ namespace KingdomBorders
             maxX += margin;
             maxY += margin;
 
-            LastRebuildMinX = minX;
-            LastRebuildMinY = minY;
-            LastRebuildMaxX = maxX;
-            LastRebuildMaxY = maxY;
-            HasLastRebuildBounds = true;
-
             float mapW = _mapMax.x - _mapMin.x;
             float mapH = _mapMax.y - _mapMin.y;
             int gridMinX = Math.Max(0, (int)(((minX - _mapMin.x) / mapW) * (_gridResolution - 1)));
@@ -489,13 +471,9 @@ namespace KingdomBorders
         /// Rebuilds only the grid cells within a region around the changed settlements.
         /// Finds the max distance to the nearest neighboring settlement to determine
         /// how far the ownership change could ripple, then only re-evaluates that area.
-        /// Also publishes the expanded bounds as LastRebuildMinX/MaxX/MinY/MaxY so the
-        /// rendering layer can preserve strips outside this region.
         /// </summary>
         public bool RebuildTerritoryGridAroundSettlements(HashSet<Settlement> changedSettlements)
         {
-            HasLastRebuildBounds = false;
-
             if (_territoryGrid == null || changedSettlements == null || changedSettlements.Count == 0)
                 return false;
 
@@ -593,13 +571,6 @@ namespace KingdomBorders
             maxX += expand;
             minY -= expand;
             maxY += expand;
-
-            // Publish the expanded bounds for the diff renderer.
-            LastRebuildMinX = minX;
-            LastRebuildMinY = minY;
-            LastRebuildMaxX = maxX;
-            LastRebuildMaxY = maxY;
-            HasLastRebuildBounds = true;
 
             // Convert to grid coordinates
             float mapW = _mapMax.x - _mapMin.x;
@@ -819,7 +790,8 @@ namespace KingdomBorders
         private Kingdom FindSurroundingKingdom(List<(int x, int y)> cells, Kingdom selfKingdom)
         {
             // Use a HashSet for fast membership checks on the blob
-            var cellSet = new HashSet<long>(cells.Count);
+            // No capacity argument: HashSet<T>(int) does not exist in netstandard2.0.
+            var cellSet = new HashSet<long>();
             foreach (var (x, y) in cells)
             {
                 cellSet.Add((long)x << 32 | (uint)y);
@@ -883,7 +855,7 @@ namespace KingdomBorders
 
             foreach (var blob in _exclaveBlobs)
             {
-                var cellSet = new HashSet<long>(blob.Cells.Count);
+                var cellSet = new HashSet<long>(); // no capacity ctor in netstandard2.0
                 foreach (var (x, y) in blob.Cells)
                     cellSet.Add(((long)x << 32) | (uint)y);
 
@@ -2017,7 +1989,7 @@ namespace KingdomBorders
             return keys;
         }
 
-        private Vec2 GridToWorld(int x, int y)
+        internal Vec2 GridToWorld(int x, int y)
         {
             float worldX = _mapMin.x + (x / (float)(_gridResolution - 1)) * (_mapMax.x - _mapMin.x);
             float worldY = _mapMin.y + (y / (float)(_gridResolution - 1)) * (_mapMax.y - _mapMin.y);
@@ -2086,5 +2058,9 @@ namespace KingdomBorders
             }
             _blobCellMap = map;
         }
+        
+        internal Kingdom GetCellKingdom(int x, int y) => _territoryGrid != null ? ResolveTrueKingdom(x, y) : null;
+
+        internal Vec2 CellSize => new Vec2((_mapMax.x - _mapMin.x) / (_gridResolution - 1), (_mapMax.y - _mapMin.y) / (_gridResolution - 1));
     }
 }

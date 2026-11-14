@@ -6,12 +6,11 @@ namespace KingdomBorders
 {
     public static class ModLog
     {
+        // <Module>\Logs\KingdomBorders.log — resolved from the DLL path (bin\<platform>\), no vanilla API needed.
         private static readonly string LogPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "Mount and Blade II Bannerlord",
-            "Configs",
-            "KingdomBorders.log"
-        );
+            Path.GetFullPath(Path.Combine(Path.GetDirectoryName(typeof(ModLog).Assembly.Location) ?? ".", "..", "..")),
+            "logs",
+            "KingdomBorders.log");
 
         // Kept open for the process lifetime instead of opening/closing the file handle on
         // every Log() call. A single regen can log 10-20+ lines; repeated CreateFile/CloseHandle

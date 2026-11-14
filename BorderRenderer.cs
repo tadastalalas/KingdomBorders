@@ -12,16 +12,18 @@ namespace KingdomBorders
         public GameEntity Entity;
         public Kingdom Kingdom;
 
-        public float MinX;
-        public float MinY;
-        public float MaxX;
-        public float MaxY;
-
         public long IdentityKey;
 
         // Set while queued in a chunked clear pass. Lets ContinueClearing() purge everything
         // that's actually been removed from the scene in one sweep once the queue drains.
         internal bool PendingRemoval;
+        
+        internal Kingdom Other;
+        internal bool IsWar;
+        internal bool IsHalo;
+        internal CampaignTime GlowUntil;
+        
+        internal float LastAlpha = -1f;
     }
 
     /// <summary>
@@ -33,8 +35,10 @@ namespace KingdomBorders
     {
         public Kingdom Kingdom;
         public uint Color;
-        public List<(List<Vec2> inner, List<Vec2> outer)> Strips = new List<(List<Vec2>, List<Vec2>)>();
+        public List<(List<Vec2> inner, List<Vec2> outer, Kingdom other)> Strips = [];
     }
+    
+    internal enum StripFlushResult { Skipped, InProgress, Created, Failed }
 
     public class BorderRenderer
     {
@@ -48,173 +52,281 @@ namespace KingdomBorders
         // engine-owned, so we reuse the two instances for every strip of every kingdom.
         private Material _matHideWater;
         private Material _matShowWater;
+        
+        private float _time;
+        // Set by the behavior before a partial flush; new strips of these kingdoms get a 1-day halo.
+        internal HashSet<Kingdom> GlowKingdoms;
+        
+        // Resumable flush state for the strip currently being built (see ContinueStrip).
+        private readonly List<Vec3> _jobInner3D = [];
+        private readonly List<Vec3> _jobOuter3D = [];
+        private readonly List<bool> _jobInnerSkip = [];
+        private readonly List<bool> _jobOuterSkip = [];
+        private List<Vec3> _jobOuterDraw;   // _jobOuter3D, or a widened copy for the player kingdom
+        private List<Vec3> _jobHalo3D;      // widened outer edge for the glow halo; null when not glowing
+        private int _jobCursor;             // next vertex pair to sample
+        private int _jobQuad;               // next quad (point index) to emit
+        private float _jobDist;             // dash distance along the inner edge up to _jobQuad
+        private int _jobCreated;            // chunk entities created for this strip
+        private long _jobKey;
+        private bool _jobActive;
+        private bool _jobPrepared;
+
+        // Mesh.AddTriangle cost grows quadratically with a mesh's triangle count (measured: 231 quads
+        // = 12 ms, 1042 quads = 250 ms). Capping quads per mesh makes the total linear; every chunk is
+        // its own entity sharing the strip's identity key.
+        private const int MaxQuadsPerMesh = 64;
+        private const double SlowChunkLogMs = 5.0;
+
+        // Native-time split, reset/logged by the behavior's PERF output.
+        internal double DiagHeightMs, DiagWaterMs, DiagMeshMs;
+        
 
         public BorderRenderer(Scene scene)
         {
             _scene = scene;
         }
-
+        
         /// <summary>
-        /// Creates one mesh entity per strip in the builder and appends them to the entry list.
-        /// Strips whose identity key is already present in <paramref name="skipKeys"/> are
-        /// skipped because the equivalent entity is still alive in the scene (preserved by an
-        /// earlier AABB cull). Returns the number of new entities actually created.
+        /// Resumable flush of one strip: samples terrain (vertex budget), then emits chunk meshes of
+        /// ≤ MaxQuadsPerMesh quads (quad budget). Returns InProgress whenever a budget runs out — call
+        /// again next tick with the same builder/stripIndex. Strips whose content key is in skipKeys
+        /// are unchanged and still in the scene, so they cost nothing.
         /// </summary>
-        public int RenderKingdomStrips(KingdomMeshBuilder builder, float heightOffset, HashSet<long> skipKeys = null)
+        internal StripFlushResult ContinueStrip(KingdomMeshBuilder builder, int stripIndex, float heightOffset,
+            HashSet<long> skipKeys, ref int vertexBudget, ref int quadBudget)
         {
-            if (builder.Strips.Count == 0)
-                return 0;
+            (List<Vec2> inner2D, List<Vec2> outer2D, Kingdom other) = builder.Strips[stripIndex];
+            int count = Math.Min(inner2D.Count, outer2D.Count);
 
-            bool showOnWater = MCMSettings.Instance?.ShowBordersOnWater ?? false;
-            bool hideWater = !showOnWater;
+            if (!_jobActive)
+            {
+                long key = ComputeIdentityKey(builder.Kingdom, other, inner2D, outer2D);
+                if (skipKeys != null && skipKeys.Contains(key))
+                    return StripFlushResult.Skipped;
+                if (count < 2)
+                    return StripFlushResult.Failed;
+
+                _jobKey = key;
+                _jobCursor = 0;
+                _jobQuad = 0;
+                _jobDist = 0f;
+                _jobCreated = 0;
+                _jobOuterDraw = null;
+                _jobHalo3D = null;
+                _jobInner3D.Clear(); _jobOuter3D.Clear();
+                _jobInnerSkip.Clear(); _jobOuterSkip.Clear();
+                _jobPrepared = false;
+                _jobActive = true;
+            }
+
+            bool hideWater = !(MCMSettings.Instance?.ShowBordersOnWater ?? false);
+
+            // Phase 1: terrain sampling (~3 µs per vertex).
+            while (_jobCursor < count && vertexBudget > 0)
+            {
+                SampleVertex(inner2D[_jobCursor], heightOffset, hideWater, _jobInner3D, _jobInnerSkip);
+                SampleVertex(outer2D[_jobCursor], heightOffset, hideWater, _jobOuter3D, _jobOuterSkip);
+                _jobCursor++;
+                vertexBudget -= 2;
+            }
+            if (_jobCursor < count)
+                return StripFlushResult.InProgress;
 
             Material mat = GetOrCreateMaterial(hideWater);
             if (mat == null)
-                return 0;
-
-            int created = 0;
-            foreach (var (inner2D, outer2D) in builder.Strips)
             {
-                if (CreateStripEntity(builder.Kingdom, builder.Color, mat, inner2D, outer2D, heightOffset, hideWater, skipKeys) != null)
-                {
-                    created++;
-                }
+                _jobActive = false;
+                return StripFlushResult.Failed;
             }
 
-            return created;
+            // Phase 2: per-strip setup.
+            MCMSettings s = MCMSettings.Instance;
+            Kingdom playerKingdom = Clan.PlayerClan?.Kingdom;
+            bool isPlayer = (s?.EmphasizePlayerKingdom ?? true) && playerKingdom != null && builder.Kingdom == playerKingdom;
+            bool glow = (s?.HighlightRecentChanges ?? true) && GlowKingdoms != null && GlowKingdoms.Contains(builder.Kingdom);
+            if (!_jobPrepared)
+            {
+                _jobOuterDraw = isPlayer ? Widen(_jobInner3D, _jobOuter3D, count, 1.6f) : _jobOuter3D;
+                _jobHalo3D = glow ? Widen(_jobInner3D, _jobOuterDraw, count, 1.8f) : null;
+                _jobPrepared = true;
+            }
+            uint color = isPlayer ? Lighten(builder.Color, 0.25f) : builder.Color;
+            uint haloColor = _jobHalo3D != null ? Lighten(builder.Color, 0.6f) : 0u;
+            int style = s?.BorderStyle?.SelectedIndex ?? 0;
+            float width = s?.BorderWidth ?? 1.05f;
+
+            // Phase 3: chunk meshes until the quad budget is spent.
+            while (_jobQuad < count - 1 && quadBudget > 0)
+            {
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                int quads = BuildChunk(builder.Kingdom, other, color, mat, inner2D, count, style, width, haloColor);
+                double ms = ElapsedMs(t0);
+                DiagMeshMs += ms;
+                if (ms > SlowChunkLogMs)
+                    ModLog.Log($"  SLOW chunk ({builder.Kingdom?.Name}, {quads} quads, halo={haloColor != 0u}): {ms:F1}ms");
+                quadBudget -= haloColor != 0u ? quads * 2 : quads;
+            }
+            if (_jobQuad < count - 1)
+                return StripFlushResult.InProgress;
+
+            _jobActive = false;
+            return _jobCreated > 0 ? StripFlushResult.Created : StripFlushResult.Failed;
         }
 
         /// <summary>
-        /// Builds a single strip (one quad ribbon) as its own GameEntity,
-        /// unless its identity key is in <paramref name="skipKeys"/> (preserved from before).
+        /// Emits up to MaxQuadsPerMesh visible quads starting at _jobQuad into one new mesh/entity
+        /// (plus a halo entity when haloColor != 0). Advances _jobQuad/_jobDist. Returns quads emitted;
+        /// 0 when the remaining range was entirely water-hidden/dashed away (no engine calls made).
         /// </summary>
-        private GameEntity CreateStripEntity(
-            Kingdom kingdom,
-            uint color,
-            Material mat,
-            List<Vec2> inner2D,
-            List<Vec2> outer2D,
-            float heightOffset,
-            bool hideWater,
-            HashSet<long> skipKeys)
+        private int BuildChunk(Kingdom kingdom, Kingdom other, uint color, Material mat, List<Vec2> inner2D, int count,
+            int style, float borderWidth, uint haloColor)
         {
-            // Identity-first: if this strip already exists as a preserved entity, skip
-            // everything including terrain sampling. This is where the Step 2 win lives.
-            long identityKey = ComputeIdentityKey(kingdom, inner2D, outer2D);
-            if (skipKeys != null && skipKeys.Contains(identityKey))
-            {
-                return null;
-            }
+            // 1 = dashed (3w on / 2w off), 2 = dotted (1w on / 1w off), measured along the inner edge.
+            float dashOn = style == 1 ? borderWidth * 3f : borderWidth;
+            float period = style == 1 ? borderWidth * 5f : borderWidth * 2f;
 
-            var (innerPoints, innerSkip) = SampleTerrainHeightsWithWater(inner2D, heightOffset, hideWater);
-            var (outerPoints, outerSkip) = SampleTerrainHeightsWithWater(outer2D, heightOffset, hideWater);
-
-            int count = Math.Min(innerPoints.Count, outerPoints.Count);
-            if (count < 2)
-                return null;
-
-            // Compute AABB from the input 2D polylines before touching the mesh lock
-            float minX = float.MaxValue, minY = float.MaxValue;
-            float maxX = float.MinValue, maxY = float.MinValue;
-
-            for (int i = 0; i < inner2D.Count; i++)
-            {
-                var p = inner2D[i];
-                if (p.x < minX) minX = p.x;
-                if (p.y < minY) minY = p.y;
-                if (p.x > maxX) maxX = p.x;
-                if (p.y > maxY) maxY = p.y;
-            }
-            for (int i = 0; i < outer2D.Count; i++)
-            {
-                var p = outer2D[i];
-                if (p.x < minX) minX = p.x;
-                if (p.y < minY) minY = p.y;
-                if (p.x > maxX) maxX = p.x;
-                if (p.y > maxY) maxY = p.y;
-            }
-
-            Mesh mesh = Mesh.CreateMesh(editable: true);
-            if (mesh == null)
-            {
-                ModLog.Log("FAIL: Mesh.CreateMesh returned null");
-                return null;
-            }
-            mesh.SetMaterial(mat);
-
-            UIntPtr lockHandle = mesh.LockEditDataWrite();
-            int quadCount = 0;
+            Mesh mesh = null, halo = null;
+            UIntPtr lockMesh = UIntPtr.Zero, lockHalo = UIntPtr.Zero;
+            int emitted = 0;
+            int i = _jobQuad;
+            float dist = _jobDist;
 
             try
             {
-                for (int i = 0; i < count - 1; i++)
+                for (; i < count - 1 && emitted < MaxQuadsPerMesh; i++)
                 {
-                    if (innerSkip[i] && outerSkip[i] &&
-                        innerSkip[i + 1] && outerSkip[i + 1])
-                    {
-                        continue;
-                    }
+                    float segLen = inner2D[i].Distance(inner2D[i + 1]);
+                    float mid = dist + segLen * 0.5f;
+                    dist += segLen;
 
-                    Vec3 innerA = innerPoints[i];
-                    Vec3 outerA = outerPoints[i];
-                    Vec3 innerB = innerPoints[i + 1];
-                    Vec3 outerB = outerPoints[i + 1];
+                    if (style != 0 && mid % period >= dashOn)
+                        continue;
+                    if (_jobInnerSkip[i] && _jobOuterSkip[i] && _jobInnerSkip[i + 1] && _jobOuterSkip[i + 1])
+                        continue;
+
+                    if (mesh == null)
+                    {
+                        mesh = Mesh.CreateMesh(editable: true);
+                        if (mesh == null)
+                        {
+                            ModLog.Log("FAIL: Mesh.CreateMesh returned null");
+                            i = count - 1; // abort the strip so the caller can't spin on it
+                            break;
+                        }
+                        mesh.SetMaterial(mat);
+                        lockMesh = mesh.LockEditDataWrite();
+
+                        if (haloColor != 0u)
+                        {
+                            halo = Mesh.CreateMesh(editable: true);
+                            if (halo != null)
+                            {
+                                halo.SetMaterial(mat);
+                                lockHalo = halo.LockEditDataWrite();
+                            }
+                        }
+                    }
 
                     float uvY0 = (float)i / (count - 1);
                     float uvY1 = (float)(i + 1) / (count - 1);
-
-                    Vec2 uv0 = new Vec2(0f, uvY0);
-                    Vec2 uv1 = new Vec2(1f, uvY0);
-                    Vec2 uv2 = new Vec2(1f, uvY1);
-                    Vec2 uv3 = new Vec2(0f, uvY1);
-
-                    // Front faces
-                    mesh.AddTriangle(innerA, outerA, outerB, uv0, uv1, uv2, color, lockHandle);
-                    mesh.AddTriangle(innerA, outerB, innerB, uv0, uv2, uv3, color, lockHandle);
-
-                    // Back faces
-                    mesh.AddTriangle(outerB, outerA, innerA, uv2, uv1, uv0, color, lockHandle);
-                    mesh.AddTriangle(innerB, outerB, innerA, uv3, uv2, uv0, color, lockHandle);
-
-                    quadCount++;
+                    AddQuad(mesh, lockMesh, _jobInner3D[i], _jobOuterDraw[i], _jobInner3D[i + 1], _jobOuterDraw[i + 1], uvY0, uvY1, color);
+                    if (halo != null)
+                        AddQuad(halo, lockHalo, _jobInner3D[i], _jobHalo3D[i], _jobInner3D[i + 1], _jobHalo3D[i + 1], uvY0, uvY1, haloColor);
+                    emitted++;
                 }
             }
             finally
             {
-                mesh.UnlockEditDataWrite(lockHandle);
+                if (mesh != null) mesh.UnlockEditDataWrite(lockMesh);
+                if (halo != null) halo.UnlockEditDataWrite(lockHalo);
             }
 
-            if (quadCount == 0)
-                return null;
+            _jobQuad = i;
+            _jobDist = dist;
+            if (mesh == null || emitted == 0)
+                return 0;
 
             mesh.ComputeNormals();
             mesh.RecomputeBoundingBox();
+            GameEntity entity = CreateEntity(mesh);
+            if (entity != null)
+            {
+                _entries.Add(new BorderEntityEntry
+                {
+                    Entity = entity, Kingdom = kingdom, Other = other, IsWar = IsAtWar(kingdom, other), IdentityKey = _jobKey
+                });
+                _jobCreated++;
+            }
 
+            if (halo != null)
+            {
+                halo.ComputeNormals();
+                halo.RecomputeBoundingBox();
+                GameEntity haloEntity = CreateEntity(halo);
+                if (haloEntity != null)
+                    _entries.Add(new BorderEntityEntry
+                    {
+                        Entity = haloEntity, Kingdom = kingdom, Other = other, IsHalo = true,
+                        GlowUntil = CampaignTime.DaysFromNow(1f), IdentityKey = _jobKey
+                    });
+            }
+            return emitted;
+        }
+
+        private static void AddQuad(Mesh mesh, UIntPtr lockHandle, Vec3 innerA, Vec3 outerA, Vec3 innerB, Vec3 outerB,
+            float uvY0, float uvY1, uint color)
+        {
+            Vec2 uv0 = new Vec2(0f, uvY0), uv1 = new Vec2(1f, uvY0), uv2 = new Vec2(1f, uvY1), uv3 = new Vec2(0f, uvY1);
+            mesh.AddTriangle(innerA, outerA, outerB, uv0, uv1, uv2, color, lockHandle);
+            mesh.AddTriangle(innerA, outerB, innerB, uv0, uv2, uv3, color, lockHandle);
+            mesh.AddTriangle(outerB, outerA, innerA, uv2, uv1, uv0, color, lockHandle);
+            mesh.AddTriangle(innerB, outerB, innerA, uv3, uv2, uv0, color, lockHandle);
+        }
+
+        private static double ElapsedMs(long t0) =>
+            (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
+        private GameEntity CreateEntity(Mesh mesh)
+        {
             GameEntity entity = GameEntity.CreateEmpty(_scene, isModifiableFromEditor: false);
             if (entity == null)
             {
                 ModLog.Log("FAIL: Entity creation returned null");
                 return null;
             }
-
             MatrixFrame identityFrame = MatrixFrame.Identity;
             entity.SetGlobalFrame(in identityFrame);
             entity.AddMesh(mesh);
             entity.SetVisibilityExcludeParents(true);
             entity.SetReadyToRender(true);
-
-            _entries.Add(new BorderEntityEntry
-            {
-                Entity = entity,
-                Kingdom = kingdom,
-                MinX = minX,
-                MinY = minY,
-                MaxX = maxX,
-                MaxY = maxY,
-                IdentityKey = identityKey
-            });
-
             return entity;
+        }
+
+        private static List<Vec3> Widen(List<Vec3> inner, List<Vec3> outer, int count, float k)
+        {
+            List<Vec3> result = new List<Vec3>(count);
+            for (int i = 0; i < count; i++)
+                result.Add(inner[i] + (outer[i] - inner[i]) * k);
+            return result;
+        }
+
+        private static uint Lighten(uint c, float t)
+        {
+            uint r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+            r += (uint)((255 - r) * t);
+            g += (uint)((255 - g) * t);
+            b += (uint)((255 - b) * t);
+            return 0xFF000000 | (r << 16) | (g << 8) | b;
+        }
+
+        private static bool IsAtWar(Kingdom a, Kingdom b) =>
+            a != null && b != null && a != b && (MCMSettings.Instance?.HighlightWarBorders ?? true) && FactionManager.IsAtWarAgainstFaction(a, b);
+
+        public void RefreshWarFlags()
+        {
+            for (int i = 0; i < _entries.Count; i++)
+                _entries[i].IsWar = IsAtWar(_entries[i].Kingdom, _entries[i].Other);
         }
 
         /// <summary>
@@ -237,7 +349,7 @@ namespace KingdomBorders
             }
         }
 
-        private static Material BuildMaterial(bool hideWater)
+        internal static Material BuildMaterial(bool hideWater)
         {
             Material mat = Material.GetFromResource("vertex_color_mat");
             if (mat == null)
@@ -262,37 +374,30 @@ namespace KingdomBorders
         }
 
         /// <summary>
-        /// Hashes kingdom identity together with quantized polyline endpoints so a rebuilt
-        /// strip whose endpoints haven't moved produces the same key as its previous incarnation.
+        /// Content hash of a strip: owner, neighbour and every quantized vertex of both edges. Two strips
+        /// with equal keys are geometrically identical, so the existing entity can stay in the scene.
         /// </summary>
-        private static long ComputeIdentityKey(Kingdom kingdom, List<Vec2> inner, List<Vec2> outer)
+        internal static long ComputeIdentityKey(Kingdom kingdom, Kingdom other, List<Vec2> inner, List<Vec2> outer)
         {
             unchecked
             {
-                const ulong fnvOffset = 14695981039346656037UL;
-                const ulong fnvPrime = 1099511628211UL;
-                ulong h = fnvOffset;
+                const ulong prime = 1099511628211UL;
+                ulong h = 14695981039346656037UL;
+                h = (h ^ (uint)(kingdom?.StringId.GetHashCode() ?? 0)) * prime;
+                h = (h ^ (uint)(other?.StringId.GetHashCode() ?? 0)) * prime;
 
-                int kid = kingdom != null ? kingdom.StringId.GetHashCode() : 0;
-                h = (h ^ (uint)kid) * fnvPrime;
-
-                if (inner.Count > 0)
+                h = (h ^ (uint)inner.Count) * prime;
+                for (int i = 0; i < inner.Count; i++)
                 {
-                    int last = inner.Count - 1;
-                    h = (h ^ (uint)Quantize(inner[0].x)) * fnvPrime;
-                    h = (h ^ (uint)Quantize(inner[0].y)) * fnvPrime;
-                    h = (h ^ (uint)Quantize(inner[last].x)) * fnvPrime;
-                    h = (h ^ (uint)Quantize(inner[last].y)) * fnvPrime;
+                    h = (h ^ (uint)Quantize(inner[i].x)) * prime;
+                    h = (h ^ (uint)Quantize(inner[i].y)) * prime;
                 }
-                if (outer.Count > 0)
+                h = (h ^ (uint)outer.Count) * prime;
+                for (int i = 0; i < outer.Count; i++)
                 {
-                    int last = outer.Count - 1;
-                    h = (h ^ (uint)Quantize(outer[0].x)) * fnvPrime;
-                    h = (h ^ (uint)Quantize(outer[0].y)) * fnvPrime;
-                    h = (h ^ (uint)Quantize(outer[last].x)) * fnvPrime;
-                    h = (h ^ (uint)Quantize(outer[last].y)) * fnvPrime;
+                    h = (h ^ (uint)Quantize(outer[i].x)) * prime;
+                    h = (h ^ (uint)Quantize(outer[i].y)) * prime;
                 }
-
                 return (long)h;
             }
         }
@@ -302,8 +407,9 @@ namespace KingdomBorders
             return (int)Math.Round(v * 100f);
         }
 
-        public void UpdateAlphaForCameraDistance(float cameraDistance, bool isVisible)
+        public void UpdateAlphaForCameraDistance(float cameraDistance, bool isVisible, float dt)
         {
+            _time += dt;
             float alpha = 0f;
 
             if (isVisible)
@@ -311,89 +417,92 @@ namespace KingdomBorders
                 float minVisible = MCMSettings.Instance?.FadeStartHeight ?? 40;
                 float maxVisible = MCMSettings.Instance?.FullOpacityHeight ?? 200;
                 const float maxAlpha = 0.7f;
-
-                if (maxVisible <= minVisible)
-                    maxVisible = minVisible + 1f;
+                if (maxVisible <= minVisible) maxVisible = minVisible + 1f;
 
                 if (cameraDistance <= minVisible) alpha = 0f;
                 else if (cameraDistance >= maxVisible) alpha = maxAlpha;
                 else alpha = ((cameraDistance - minVisible) / (maxVisible - minVisible)) * maxAlpha;
             }
-            // isVisible == false → alpha stays 0f, all entities hidden
+
+            Kingdom playerKingdom = Clan.PlayerClan?.Kingdom;
+            float dimmed = playerKingdom != null && (MCMSettings.Instance?.EmphasizePlayerKingdom ?? true) ? alpha * 0.55f : alpha;
+            float pulse = 0.65f + 0.35f * (float)Math.Sin(_time * 4f); // 0.3..1.0, ~1.6 s period
 
             for (int i = 0; i < _entries.Count; i++)
             {
-                var entity = _entries[i].Entity;
-                if (entity != null) entity.SetAlpha(alpha);
-            }
-        }
+                BorderEntityEntry entry = _entries[i];
+                GameEntity entity = entry.Entity;
+                if (entity == null) continue;
 
-                /// <summary>
-        /// Classifies entries belonging to any of the specified kingdoms whose strip AABB
-        /// intersects the given box. This pass only does cheap float comparisons — it does
-        /// NOT call the native GameEntity.Remove() yet. Entries outside the box are left alone
-        /// and their identity keys returned so the caller can skip re-rendering equivalent new
-        /// strips. Entries inside the box are queued; call ContinueClearing() on subsequent
-        /// ticks to actually remove them.
-        /// </summary>
-        public HashSet<long> BeginClearForKingdomsInBounds(HashSet<Kingdom> kingdoms,
-            float minX, float minY, float maxX, float maxY)
-        {
-            var preservedKeys = new HashSet<long>();
-            var toRemove = new List<BorderEntityEntry>();
-
-            for (int i = 0; i < _entries.Count; i++)
-            {
-                var entry = _entries[i];
-                if (!kingdoms.Contains(entry.Kingdom))
+                if (entry.IsHalo)
+                {
+                    if (entry.GlowUntil.IsPast)
+                    {
+                        if (entry.PendingRemoval) { entity.SetAlpha(0f); continue; }
+                        entity.Remove(0);
+                        _entries.RemoveAt(i);
+                        i--;
+                        continue;
+                    }
+                    float haloAlpha = alpha * (float)entry.GlowUntil.RemainingDaysFromNow * pulse;
+                    if (Math.Abs(haloAlpha - entry.LastAlpha) > 0.002f)
+                    {
+                        entity.SetAlpha(haloAlpha);
+                        entry.LastAlpha = haloAlpha;
+                    }
                     continue;
-
-                bool disjoint = entry.MaxX < minX || entry.MinX > maxX ||
-                                entry.MaxY < minY || entry.MinY > maxY;
-
-                if (!disjoint)
-                {
-                    entry.PendingRemoval = true;
-                    toRemove.Add(entry);
                 }
-                else
+
+                float a = entry.Kingdom == playerKingdom ? alpha : dimmed;
+                if (entry.IsWar) a *= pulse;
+                if (Math.Abs(a - entry.LastAlpha) > 0.002f)
                 {
-                    preservedKeys.Add(entry.IdentityKey);
+                    entity.SetAlpha(a);
+                    entry.LastAlpha = a;
                 }
             }
-
-            ModLog.Log($"AABB cull: queued {toRemove.Count} intersecting for removal, preserved {preservedKeys.Count} outside " +
-                       $"(kingdoms={kingdoms.Count}, box=({minX:F1},{minY:F1})-({maxX:F1},{maxY:F1}))");
-
-            _pendingRemoval = toRemove;
-            _removalIndex = 0;
-
-            return preservedKeys;
         }
 
         /// <summary>
-        /// Classifies all entries involving any of the specified kingdoms for removal.
-        /// Like BeginClearForKingdomsInBounds, only queues them — call ContinueClearing() to
-        /// perform the actual native removals across subsequent ticks.
+        /// Diff cull for a partial rebuild. Old entries of the affected kingdoms whose content key still
+        /// appears among the freshly generated strips are kept (keys returned so the flush skips them);
+        /// everything else of those kingdoms is stale and queued for ContinueClearing().
         /// </summary>
-        public void BeginClearForKingdoms(HashSet<Kingdom> kingdoms)
+        public HashSet<long> BeginClearDiff(HashSet<Kingdom> kingdoms, List<KingdomMeshBuilder> builders)
         {
-            var toRemove = new List<BorderEntityEntry>();
+            HashSet<long> newKeys = new HashSet<long>();
+            for (int b = 0; b < builders.Count; b++)
+            {
+                KingdomMeshBuilder builder = builders[b];
+                for (int i = 0; i < builder.Strips.Count; i++)
+                {
+                    (List<Vec2> inner, List<Vec2> outer, Kingdom other) = builder.Strips[i];
+                    newKeys.Add(ComputeIdentityKey(builder.Kingdom, other, inner, outer));
+                }
+            }
 
+            HashSet<long> preserved = new HashSet<long>();
+            List<BorderEntityEntry> toRemove = new List<BorderEntityEntry>();
             for (int i = 0; i < _entries.Count; i++)
             {
-                var entry = _entries[i];
-                if (kingdoms.Contains(entry.Kingdom))
+                BorderEntityEntry entry = _entries[i];
+                if (!kingdoms.Contains(entry.Kingdom))
+                    continue;
+                if (newKeys.Contains(entry.IdentityKey))
+                    preserved.Add(entry.IdentityKey);
+                else
                 {
                     entry.PendingRemoval = true;
                     toRemove.Add(entry);
                 }
             }
 
-            ModLog.Log($"Queued {toRemove.Count} border entities for removal ({kingdoms.Count} kingdoms)");
+            ModLog.Log($"Diff cull: {toRemove.Count} stale strips queued for removal, {preserved.Count} unchanged kept, " +
+                       $"~{newKeys.Count - preserved.Count} to create (kingdoms={kingdoms.Count})");
 
             _pendingRemoval = toRemove;
             _removalIndex = 0;
+            return preserved;
         }
 
         /// <summary>
@@ -428,11 +537,12 @@ namespace KingdomBorders
             _entries.Clear();
             _pendingRemoval = null;
             _removalIndex = 0;
+            _jobActive = false;
         }
 
         public int EntityCount => _entries.Count;
 
-        private bool IsWaterPoint(Vec2 p)
+        internal static bool IsWaterPoint(Vec2 p)
         {
             var mapSceneWrapper = Campaign.Current.MapSceneWrapper;
 
@@ -462,47 +572,31 @@ namespace KingdomBorders
             return false;
         }
 
-        private (List<Vec3> points, List<bool> shouldHide) SampleTerrainHeightsWithWater(
-            List<Vec2> points2D, float heightOffset, bool hideWater)
+        private void SampleVertex(Vec2 p, float heightOffset, bool hideWater, List<Vec3> points3D, List<bool> hideFlags)
         {
-            var points3D = new List<Vec3>(points2D.Count);
-            var hideFlags = new List<bool>(points2D.Count);
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            float height = 0f;
+            CampaignVec2 campaignPos = new CampaignVec2(p, false);
+            Campaign.Current.MapSceneWrapper.GetHeightAtPoint(in campaignPos, ref height);
+            long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool water = IsWaterPoint(p);
+            DiagHeightMs += (t1 - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            DiagWaterMs += ElapsedMs(t1);
 
-            var mapSceneWrapper = Campaign.Current.MapSceneWrapper;
-
-            if (!hideWater)
+            if (hideWater)
             {
-                foreach (var p in points2D)
-                {
-                    float height = 0f;
-                    var campaignPos = new CampaignVec2(p, false);
-                    mapSceneWrapper.GetHeightAtPoint(in campaignPos, ref height);
-
-                    if (IsWaterPoint(p))
-                    {
-                        float waterLevel = _scene.GetWaterLevelAtPosition(p, false, true);
-                        if (waterLevel > height)
-                        {
-                            height = waterLevel;
-                        }
-                    }
-
-                    points3D.Add(new Vec3(p.x, p.y, height + heightOffset));
-                    hideFlags.Add(false);
-                }
-                return (points3D, hideFlags);
-            }
-
-            foreach (var p in points2D)
-            {
-                float height = 0f;
-                var campaignPos = new CampaignVec2(p, false);
-                mapSceneWrapper.GetHeightAtPoint(in campaignPos, ref height);
                 points3D.Add(new Vec3(p.x, p.y, height + heightOffset));
-                hideFlags.Add(IsWaterPoint(p));
+                hideFlags.Add(water);
+                return;
             }
 
-            return (points3D, hideFlags);
+            if (water)
+            {
+                float waterLevel = _scene.GetWaterLevelAtPosition(p, false, true);
+                if (waterLevel > height) height = waterLevel;
+            }
+            points3D.Add(new Vec3(p.x, p.y, height + heightOffset));
+            hideFlags.Add(false);
         }
     }
 }

@@ -17,7 +17,7 @@
 		<string id="KB_dd8z7WavCY" text="水上に国境を表示" />
 		<string id="KB_tSWvnFByJ5" text="国境が見え始めるカメラの高度です。値が小さいほど、よりズームインした時に国境が表示されるようになります。[デフォルト: 30]" />
 		<string id="KB_Nvt3nDz9B9" text="国境が完全に不透明になるカメラの高度です。[デフォルト: 300]" />
-		<string id="KB_sgyNhjlxl4" text="国境の表示/非表示を切り替えるキーです。[デフォルト: M]" />
+		<string id="KB_sgyNhjlxl4" text="表示を切り替えるキーです: オフ、国境、国境 + 領土の色分け、領土の色分けのみ。領土の色分けが無効の場合は、国境のオン/オフのみを切り替えます。[デフォルト: M]" />
 		<string id="KB_rZKzD08uWg" text="各王国の国境線の幅（ワールド単位）。[デフォルト: 1.05]" />
 		<string id="KB_esaK0vgYFX" text="隣接する2つの王国の国境線間の隙間です。[デフォルト: 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="地形の表面から国境をどれだけ浮かすか。国境が山に埋もれる場合は増やしてください。[デフォルト: 0.55]" />
@@ -26,8 +26,33 @@
 		<string id="KB_GG5BW78w88" text="グリッド解像度" />
 		<string id="KB_r5mBKIWelk" text="国境の計算に使用される領土グリッドの解像度です。値を高くするとより精密な国境になりますが、再構築時のパフォーマンスが低下します。[デフォルト: 150]" />
 		<string id="KB_Y0GmZgp0H3" text="デバッグログを有効にする" />
-		<string id="KB_mvcbyndDid" text="Configsフォルダ内のKingdomBorders.logに詳細な診断情報を書き込みます。不要なディスク書き込みを避けるには無効にしてください。[デフォルト: 無効]" />
+		<string id="KB_mvcbyndDid" text="Modフォルダ内のlogsフォルダにあるKingdomBorders.logに詳細な診断情報を書き込みます。不要なディスク書き込みを避けるには無効にしてください。[デフォルト: 無効]" />
 		<string id="KB_Xsi6Fl5Zp6" text="コーナースムージング" />
 		<string id="KB_GEvl58fFtW" text="国境の角に適用される平滑化の反復回数です。値を高くするとカーブが滑らかになりますが、ジオメトリと再構築コストが増加します。[デフォルト: 3]" />
+		<string id="KB_ModeOff" text="国境: オフ" />
+		<string id="KB_ModeOn" text="国境: オン" />
+		<string id="KB_ModeTint" text="国境: オン + 領土の色分け" />
+		<string id="KB_ModeTintOnly" text="領土の色分けのみ" />
+		<string id="KB_LabelInfo" text="領地 {FIEFS} · クラン {CLANS}" />
+		<string id="KB_OnlyPlayer" text="プレイヤー王国の国境のみ" />
+		<string id="KB_OnlyPlayerHint" text="自分の王国が隣国と接する国境のみを描画します。王国に所属していない場合は無視されます。[デフォルト: 無効]" />
+		<string id="KB_Tint" text="領土の色分け" />
+		<string id="KB_TintHint" text="各王国の色による低解像度の塗りつぶしです。大きくズームアウトした時に表示されます（ホットキーで切り替え）。[デフォルト: 有効]" />
+		<string id="KB_TintOpacity" text="領土の色分けの不透明度" />
+		<string id="KB_TintOpacityHint" text="[デフォルト: 0.15]" />
+		<string id="KB_Labels" text="王国名ラベル" />
+		<string id="KB_LabelsHint" text="ズームアウト時に、各王国の名前と領地/クランの数をその領土の上に表示します。[デフォルト: 有効]" />
+		<string id="KB_LabelHeight" text="ラベルの高度" />
+		<string id="KB_LabelHeightHint" text="王国ラベルが表示されるようになるカメラの高度です。デバッグログが有効な場合、ホットキーのメッセージに現在のカメラ高度が表示されます。[デフォルト: 300]" />
+		<string id="KB_TownPlateHeight" text="都市のネームプレートを非表示にする高度" />
+		<string id="KB_TownPlateHeightHint" text="この高度を超えると都市のネームプレートが非表示になります。バニラが村/城のネームプレートを非表示にするのと同様です。0 = 非表示にしない。[デフォルト: 600]" />
+		<string id="KB_Style" text="国境のスタイル" />
+		<string id="KB_StyleHint" text="実線、破線、点線の国境線です。[デフォルト: Solid]" />
+		<string id="KB_Emph" text="プレイヤー王国を強調" />
+		<string id="KB_EmphHint" text="自分の王国の国境線は太く明るくなり、他の国境線は薄くなります。[デフォルト: 無効]" />
+		<string id="KB_War" text="戦争中の国境を点滅" />
+		<string id="KB_WarHint" text="戦争中の王国間の国境線が点滅します。[デフォルト: 有効]" />
+		<string id="KB_Glow" text="最近変化した国境を光らせる" />
+		<string id="KB_GlowHint" text="新たに獲得した国境が1日間光ります。[デフォルト: 有効]" />
 	</strings>
 </base>

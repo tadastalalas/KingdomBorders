@@ -17,7 +17,7 @@
 		<string id="KB_dd8z7WavCY" text="Sınırları Suda Göster" />
 		<string id="KB_tSWvnFByJ5" text="Sınırların görünür olmaya başladığı kamera yüksekliği. Daha düşük değerler, yakınlaştırıldığında sınırların görünmesini sağlar. [Varsayılan: 30]" />
 		<string id="KB_Nvt3nDz9B9" text="Sınırların tam opaklığa ulaştığı kamera yüksekliği. [Varsayılan: 300]" />
-		<string id="KB_sgyNhjlxl4" text="Sınır görünürlüğünü açma/kapatma tuşu. [Varsayılan: M]" />
+		<string id="KB_sgyNhjlxl4" text="Görünümü değiştirme tuşu: kapalı, sınırlar, sınırlar + bölge renklendirmesi, yalnızca bölge renklendirmesi. Bölge Renklendirmesi devre dışıyken yalnızca sınırları açıp kapatır. [Varsayılan: M]" />
 		<string id="KB_rZKzD08uWg" text="Dünya birimi cinsinden her krallığın sınır şeridinin genişliği. [Varsayılan: 1.05]" />
 		<string id="KB_esaK0vgYFX" text="Bitişik iki krallık sınır şeridi arasındaki boşluk. [Varsayılan: 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="Sınırın arazi yüzeyinden ne kadar yükseğe kaldırıldığı. Eğer sınırlar dağların içine giriyorsa bu değeri artırın. [Varsayılan: 0.55]" />
@@ -26,8 +26,33 @@
 		<string id="KB_GG5BW78w88" text="Bölge Çözünürlüğü" />
 		<string id="KB_r5mBKIWelk" text="Sınırları hesaplamak için kullanılan bölge ızgarasının çözünürlüğü. Daha yüksek değerler daha kesin sınırlar üretir ancak yeniden oluşturma performansını düşürür. [Varsayılan: 150]" />
 		<string id="KB_Y0GmZgp0H3" text="Hata Ayıklama Günlüğünü Etkinleştir" />
-		<string id="KB_mvcbyndDid" text="Configs klasöründeki KingdomBorders.log dosyasına ayrıntılı tanılama bilgisi yazar. Gereksiz disk yazımlarını önlemek için devre dışı bırakın. [Varsayılan: devre dışı]" />
+		<string id="KB_mvcbyndDid" text="Mod klasöründeki logs klasöründe bulunan KingdomBorders.log dosyasına ayrıntılı tanılama bilgisi yazar. Gereksiz disk yazımlarını önlemek için devre dışı bırakın. [Varsayılan: devre dışı]" />
 		<string id="KB_Xsi6Fl5Zp6" text="Köşe Yumuşatma" />
 		<string id="KB_GEvl58fFtW" text="Sınır köşelerine uygulanan yumuşatma yinelemesi sayısı. Daha yüksek değerler daha yumuşak eğriler oluşturur ancak geometriyi ve yeniden oluşturma maliyetini artırır. [Varsayılan: 3]" />
+		<string id="KB_ModeOff" text="Sınırlar: kapalı" />
+		<string id="KB_ModeOn" text="Sınırlar: açık" />
+		<string id="KB_ModeTint" text="Sınırlar: açık + bölge renklendirmesi" />
+		<string id="KB_ModeTintOnly" text="Yalnızca bölge renklendirmesi" />
+		<string id="KB_LabelInfo" text="Tımar: {FIEFS} · Klan: {CLANS}" />
+		<string id="KB_OnlyPlayer" text="Yalnızca Oyuncu Krallığının Sınırları" />
+		<string id="KB_OnlyPlayerHint" text="Yalnızca krallığınızın komşularıyla paylaştığı sınırları çizer. Krallığınız yoksa yok sayılır. [Varsayılan: devre dışı]" />
+		<string id="KB_Tint" text="Bölge Renklendirmesi" />
+		<string id="KB_TintHint" text="Her krallığın rengiyle düşük çözünürlüklü dolgu; kamera çok uzaklaştırıldığında görünür (kısayol tuşuyla geçiş yapın). [Varsayılan: etkin]" />
+		<string id="KB_TintOpacity" text="Bölge Renklendirmesi Opaklığı" />
+		<string id="KB_TintOpacityHint" text="[Varsayılan: 0.15]" />
+		<string id="KB_Labels" text="Krallık Adı Etiketleri" />
+		<string id="KB_LabelsHint" text="Uzaklaştırıldığında her krallığın adını ve tımar/klan sayısını kendi bölgesinin üzerinde gösterir. [Varsayılan: etkin]" />
+		<string id="KB_LabelHeight" text="Etiket Yüksekliği" />
+		<string id="KB_LabelHeightHint" text="Krallık etiketlerinin gösterilmeye başladığı kamera yüksekliği. Hata Ayıklama Günlüğü açıkken kısayol mesajı geçerli kamera yüksekliğini gösterir. [Varsayılan: 300]" />
+		<string id="KB_TownPlateHeight" text="Şehir İsim Levhalarını Gizleme Yüksekliği" />
+		<string id="KB_TownPlateHeightHint" text="Bu kamera yüksekliğinin üzerinde şehir isim levhaları gizlenir; oyunun köy/kale levhalarını gizlemesi gibi. 0 = asla. [Varsayılan: 600]" />
+		<string id="KB_Style" text="Sınır Stili" />
+		<string id="KB_StyleHint" text="Düz, kesik çizgili veya noktalı şeritler. [Varsayılan: Solid]" />
+		<string id="KB_Emph" text="Oyuncu Krallığını Vurgula" />
+		<string id="KB_EmphHint" text="Krallığınızın şeritleri daha geniş ve daha parlaktır; diğerleri soluklaştırılır. [Varsayılan: devre dışı]" />
+		<string id="KB_War" text="Savaştaki Sınırlar Yanıp Sönsün" />
+		<string id="KB_WarHint" text="Savaşta olan krallıklar arasındaki şeritler yanıp söner. [Varsayılan: etkin]" />
+		<string id="KB_Glow" text="Yeni Değişen Sınırları Parlat" />
+		<string id="KB_GlowHint" text="Yeni kazanılan sınır bir gün boyunca parlar. [Varsayılan: etkin]" />
 	</strings>
 </base>

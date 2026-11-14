@@ -17,7 +17,7 @@
 		<string id="KB_dd8z7WavCY" text="Mostra Confini sull'Acqua" />
 		<string id="KB_tSWvnFByJ5" text="Altezza della telecamera alla quale i confini iniziano a diventare visibili. Valori più bassi fanno apparire i confini con uno zoom più ravvicinato. [Predefinito: 30]" />
 		<string id="KB_Nvt3nDz9B9" text="Altezza della telecamera alla quale i confini raggiungono l'opacità massima. [Predefinito: 300]" />
-		<string id="KB_sgyNhjlxl4" text="Tasto per attivare/disattivare la visibilità dei confini. [Predefinito: M]" />
+		<string id="KB_sgyNhjlxl4" text="Tasto per alternare la visualizzazione: disattivato, confini, confini + tinta del territorio, solo tinta del territorio. Con la Tinta del Territorio disattivata, attiva o disattiva soltanto i confini. [Predefinito: M]" />
 		<string id="KB_rZKzD08uWg" text="Larghezza del nastro di confine di ogni regno in unità del mondo. [Predefinito: 1.05]" />
 		<string id="KB_esaK0vgYFX" text="Distananza tra due nastri di confine di regni adiacenti. [Predefinito: 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="Quanto è sollevato il confine rispetto alla superficie del terreno. Aumenta il valore se i confini si compenetrano nelle montagne. [Predefinito: 0.55]" />
@@ -26,8 +26,33 @@
 		<string id="KB_GG5BW78w88" text="Risoluzione della Griglia" />
 		<string id="KB_r5mBKIWelk" text="Risoluzione della griglia territoriale usata per calcolare i confini. Valori più alti producono confini più precisi a scapito delle prestazioni durante la ricostruzione. [Predefinito: 150]" />
 		<string id="KB_Y0GmZgp0H3" text="Attiva Registrazione di Debug" />
-		<string id="KB_mvcbyndDid" text="Scrive informazioni diagnostiche dettagliate nel file KingdomBorders.log nella cartella Configs. Disattiva per evitare scritture su disco non necessarie. [Predefinito: disattivato]" />
+		<string id="KB_mvcbyndDid" text="Scrive informazioni diagnostiche dettagliate nel file KingdomBorders.log nella cartella logs all'interno della cartella della mod. Disattiva per evitare scritture su disco non necessarie. [Predefinito: disattivato]" />
 		<string id="KB_Xsi6Fl5Zp6" text="Levigatura degli Angoli" />
 		<string id="KB_GEvl58fFtW" text="Numero di iterazioni di levigatura applicate agli angoli del confine. Valori più alti producono curve più morbide ma aumentano la geometria e il costo di ricostruzione. [Predefinito: 3]" />
+		<string id="KB_ModeOff" text="Confini: disattivati" />
+		<string id="KB_ModeOn" text="Confini: attivati" />
+		<string id="KB_ModeTint" text="Confini: attivati + tinta del territorio" />
+		<string id="KB_ModeTintOnly" text="Solo tinta del territorio" />
+		<string id="KB_LabelInfo" text="{FIEFS} feudi · {CLANS} clan" />
+		<string id="KB_OnlyPlayer" text="Solo Confini del Regno del Giocatore" />
+		<string id="KB_OnlyPlayerHint" text="Disegna solo i confini che il tuo regno condivide con i vicini. Ignorato se non hai un regno. [Predefinito: disattivato]" />
+		<string id="KB_Tint" text="Tinta del Territorio" />
+		<string id="KB_TintHint" text="Riempimento a bassa risoluzione con il colore di ogni regno, visibile con lo zoom molto lontano (alterna con la scorciatoia). [Predefinito: attivato]" />
+		<string id="KB_TintOpacity" text="Opacità della Tinta del Territorio" />
+		<string id="KB_TintOpacityHint" text="[Predefinito: 0.15]" />
+		<string id="KB_Labels" text="Etichette con il Nome dei Regni" />
+		<string id="KB_LabelsHint" text="Mostra il nome di ogni regno e il numero di feudi/clan sopra il suo territorio quando lo zoom è lontano. [Predefinito: attivato]" />
+		<string id="KB_LabelHeight" text="Altezza delle Etichette" />
+		<string id="KB_LabelHeightHint" text="Altezza della telecamera sopra la quale vengono mostrate le etichette dei regni. Con la Registrazione di Debug attiva, il messaggio della scorciatoia mostra l'altezza attuale della telecamera. [Predefinito: 300]" />
+		<string id="KB_TownPlateHeight" text="Nascondi Targhette delle Città Sopra" />
+		<string id="KB_TownPlateHeightHint" text="Altezza della telecamera sopra la quale le targhette con il nome delle città vengono nascoste, come il gioco base nasconde quelle di villaggi/castelli. 0 = mai. [Predefinito: 600]" />
+		<string id="KB_Style" text="Stile del Confine" />
+		<string id="KB_StyleHint" text="Nastri continui, tratteggiati o punteggiati. [Predefinito: Solid]" />
+		<string id="KB_Emph" text="Evidenzia il Regno del Giocatore" />
+		<string id="KB_EmphHint" text="I nastri del tuo regno sono più larghi e più chiari; gli altri sono attenuati. [Predefinito: disattivato]" />
+		<string id="KB_War" text="Confini in Guerra Pulsanti" />
+		<string id="KB_WarHint" text="I nastri tra regni in guerra pulsano. [Predefinito: attivato]" />
+		<string id="KB_Glow" text="Bagliore sui Confini Cambiati di Recente" />
+		<string id="KB_GlowHint" text="Il confine appena conquistato brilla per un giorno. [Predefinito: attivato]" />
 	</strings>
 </base>

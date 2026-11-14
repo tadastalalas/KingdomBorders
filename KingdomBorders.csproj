@@ -1,84 +1,21 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk;Bannerlord.BuildResourcesLite.Sdk/1.2.3.41">
 
   <PropertyGroup>
-    <Version>1.2.2</Version>
-    <TargetFrameworks>net472;net6</TargetFrameworks>
-    <Platforms>x64</Platforms>
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <LangVersion>10.0</LangVersion>
-    <Nullable>enable</Nullable>
-    <BuildForWindows>false</BuildForWindows>
-    <BuildForWindowsStore>false</BuildForWindowsStore>
-    <AssemblyName>KingdomBorders</AssemblyName>
-    <RootNamespace>KingdomBorders</RootNamespace>
-    <ModuleId>KingdomBorders</ModuleId>
+    <Version>1.5.7.0</Version>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <ModuleId>$(MSBuildProjectName)</ModuleId>
     <ModuleName>Kingdom Borders</ModuleName>
     <ModuleUrl>https://www.nexusmods.com/mountandblade2bannerlord/mods/10699</ModuleUrl>
-    <GameFolder>$(BANNERLORD_GAME_DIR)</GameFolder>
-    <GameBinariesFolder Condition="Exists('$(GameFolder)\bin\Win64_Shipping_Client\Bannerlord.exe')">Win64_Shipping_Client</GameBinariesFolder>
-    <GameBinariesFolder Condition="Exists('$(GameFolder)\bin\Gaming.Desktop.x64_Shipping_Client\Bannerlord.exe')">Gaming.Desktop.x64_Shipping_Client</GameBinariesFolder>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="$(TargetFramework) == 'net472'">
-    <BuildForWindows>true</BuildForWindows>
-  </PropertyGroup>
-  <PropertyGroup Condition="$(TargetFramework) == 'net6'">
+    <AssemblyName>$(ModuleId).v$(GameVersion)</AssemblyName>
     <BuildForWindowsStore>true</BuildForWindowsStore>
-    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <DefineConstants>$(DefineConstants);v$(GameVersion.Replace('.',''))</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="$(GameFolder)\bin\$(GameBinariesFolder)\Newtonsoft.Json.dll">
-      <HintPath>%(Identity)</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="$(GameFolder)\bin\$(GameBinariesFolder)\TaleWorlds.*.dll" Exclude="$(GameFolder)\bin\$(GameBinariesFolder)\TaleWorlds.Native.dll">
-      <HintPath>%(Identity)</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="$(GameFolder)\Modules\Native\bin\$(GameBinariesFolder)\*.dll">
-      <HintPath>%(Identity)</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="$(GameFolder)\Modules\SandBox\bin\$(GameBinariesFolder)\*.dll">
-      <HintPath>%(Identity)</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="$(GameFolder)\Modules\SandBoxCore\bin\$(GameBinariesFolder)\*.dll">
-      <HintPath>%(Identity)</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="$(GameFolder)\Modules\StoryMode\bin\$(GameBinariesFolder)\*.dll">
-      <HintPath>%(Identity)</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="$(GameFolder)\Modules\CustomBattle\bin\$(GameBinariesFolder)\*.dll">
-      <HintPath>%(Identity)</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="$(GameFolder)\Modules\BirthAndDeath\bin\$(GameBinariesFolder)\*.dll">
-      <HintPath>%(Identity)</HintPath>
-      <Private>False</Private>
-    </Reference>
-  </ItemGroup>
-
-    <ItemGroup>
-	    <Compile Remove="BLSource\**" />
-	    <EmbeddedResource Remove="BLSource\**" />
-	    <None Remove="BLSource\**" />
-	    <None Include="BLSource\**">
-		    <Visible>true</Visible>
-	    </None>
-    </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Nullable" Version="1.3.1" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
-    <PackageReference Include="IsExternalInit" Version="1.0.3" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
-    <PackageReference Include="Bannerlord.BuildResources" Version="1.1.0.124" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
-    <PackageReference Include="Lib.Harmony" Version="2.3.3" IncludeAssets="compile" />
-    <PackageReference Include="Harmony.Extensions" Version="3.2.0.77" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+    <PackageReference Include="Bannerlord.ModuleLoader.Injector" Version="1.0.1.50" PrivateAssets="all" />
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" IncludeAssets="compile" />
+    <PackageReference Include="Bannerlord.MCM" Version="5.12.3" IncludeAssets="compile" />
     <PackageReference Include="BUTR.Harmony.Analyzer" Version="1.0.1.50" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
-    <PackageReference Include="Bannerlord.MCM" Version="5.9.1" IncludeAssets="compile" />
   </ItemGroup>
 
 </Project>

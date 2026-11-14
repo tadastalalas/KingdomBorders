@@ -1,6 +1,5 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
-<Module xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'
-        xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/BUTR/Bannerlord.XmlSchemas/master/SubModule.xsd" >
+<Module>
   <Id value="$moduleid$" />
   <Name value="$modulename$" />
   <Version value="v$version$" />
@@ -9,27 +8,29 @@
   <ModuleType value="Community" />
   <Url value="$moduleurl$" />
   <DependedModules>
+    <DependedModule Id="Bannerlord.Harmony" DependentVersion="v$harmonyversion$" />
+    <DependedModule Id="Bannerlord.MBOptionScreen" DependentVersion="v$mcmversion$" />
     <DependedModule Id="Native" />
     <DependedModule Id="SandBoxCore" />
     <DependedModule Id="Sandbox" />
     <DependedModule Id="StoryMode" />
-    <DependedModule Id="CustomBattle" />
-    <DependedModule Id="Bannerlord.MBOptionScreen" DependentVersion="v5.11.4" />
   </DependedModules>
   <DependedModuleMetadatas>
+    <DependedModuleMetadata id="Bannerlord.Harmony" order="LoadBeforeThis" version="v$harmonyversion$" />
+    <DependedModuleMetadata id="Bannerlord.MBOptionScreen" order="LoadBeforeThis" version="v$mcmversion$" />
     <DependedModuleMetadata id="Native" order="LoadBeforeThis" />
     <DependedModuleMetadata id="SandBoxCore" order="LoadBeforeThis" />
     <DependedModuleMetadata id="Sandbox" order="LoadBeforeThis" />
     <DependedModuleMetadata id="StoryMode" order="LoadBeforeThis" />
-    <DependedModuleMetadata id="CustomBattle" order="LoadBeforeThis" />
-    <DependedModuleMetadata id="Bannerlord.MBOptionScreen" order="LoadBeforeThis" version="v5.11.4" />
   </DependedModuleMetadatas>
   <SubModules>
     <SubModule>
-      <Name value="$modulename$" />
-      <DLLName value="$moduleid$.dll" />
-      <SubModuleClassType value="$moduleid$.SubModule" />
-      <Tags />
+      <Name value="Bannerlord Module Loader" />
+      <DLLName value="Bannerlord.ModuleLoader.$moduleid$.dll" />
+      <SubModuleClassType value="Bannerlord.ModuleLoader.$moduleid$" />
+      <Tags>
+        <Tag key="LoaderFilter" value="$moduleid$.*.dll" />
+      </Tags>
     </SubModule>
   </SubModules>
 </Module>

@@ -17,7 +17,7 @@
 		<string id="KB_dd8z7WavCY" text="Grenzen auf Wasser anzeigen" />
 		<string id="KB_tSWvnFByJ5" text="Kamerahöhe, bei der die Grenzen sichtbar werden. Niedrigere Werte lassen die Grenzen erscheinen, wenn näher herangezoomt wird. [Standard: 30]" />
 		<string id="KB_Nvt3nDz9B9" text="Kamerahöhe, bei der die Grenzen ihre volle Deckkraft erreichen. [Standard: 300]" />
-		<string id="KB_sgyNhjlxl4" text="Taste zum Ein- und Ausschalten der Grenzsichtbarkeit. [Standard: M]" />
+		<string id="KB_sgyNhjlxl4" text="Taste zum Durchschalten der Anzeige: aus, Grenzen, Grenzen + Gebietsfärbung, nur Gebietsfärbung. Bei deaktivierter Gebietsfärbung schaltet sie nur die Grenzen ein und aus. [Standard: M]" />
 		<string id="KB_rZKzD08uWg" text="Breite des Grenzstreifens jedes Königreichs in Welteinheiten. [Standard: 1.05]" />
 		<string id="KB_esaK0vgYFX" text="Abstand zwischen zwei benachbarten Königreichsgrenzstreifen. [Standard: 0.30]" />
 		<string id="KB_r5gC0YQqcu" text="Wie weit die Grenze über die Geländeoberfläche angehoben wird. Erhöhen, falls Grenzen in Berge hineinragen. [Standard: 0.55]" />
@@ -26,8 +26,33 @@
 		<string id="KB_GG5BW78w88" text="Rasterauflösung" />
 		<string id="KB_r5mBKIWelk" text="Auflösung des Territoriumsrasters zur Grenzberechnung. Höhere Werte erzeugen präzisere Grenzen, verringern jedoch die Leistung beim Neuaufbau. [Standard: 150]" />
 		<string id="KB_Y0GmZgp0H3" text="Debug-Protokollierung aktivieren" />
-		<string id="KB_mvcbyndDid" text="Schreibt detaillierte Diagnoseinformationen in die Datei KingdomBorders.log im Configs-Ordner. Deaktivieren, um unnötige Festplattenzugriffe zu vermeiden. [Standard: deaktiviert]" />
+		<string id="KB_mvcbyndDid" text="Schreibt detaillierte Diagnoseinformationen in die Datei KingdomBorders.log im Ordner logs im Mod-Ordner. Deaktivieren, um unnötige Festplattenzugriffe zu vermeiden. [Standard: deaktiviert]" />
 		<string id="KB_Xsi6Fl5Zp6" text="Eckenglättung" />
 		<string id="KB_GEvl58fFtW" text="Anzahl der Glättungsdurchläufe für Grenzecken. Höhere Werte erzeugen glattere Kurven, erhöhen aber Geometrie und Neuaufbaukosten. [Standard: 3]" />
+		<string id="KB_ModeOff" text="Grenzen: aus" />
+		<string id="KB_ModeOn" text="Grenzen: an" />
+		<string id="KB_ModeTint" text="Grenzen: an + Gebietsfärbung" />
+		<string id="KB_ModeTintOnly" text="Nur Gebietsfärbung" />
+		<string id="KB_LabelInfo" text="{FIEFS} Lehen · {CLANS} Clans" />
+		<string id="KB_OnlyPlayer" text="Nur Grenzen des Spielerkönigreichs" />
+		<string id="KB_OnlyPlayerHint" text="Zeichnet nur die Grenzen, die dein Königreich mit seinen Nachbarn teilt. Wird ignoriert, wenn du kein Königreich hast. [Standard: deaktiviert]" />
+		<string id="KB_Tint" text="Gebietsfärbung" />
+		<string id="KB_TintHint" text="Grob aufgelöste Farbfüllung in der Farbe jedes Königreichs, sichtbar bei weit herausgezoomter Kamera (mit dem Hotkey durchschalten). [Standard: aktiviert]" />
+		<string id="KB_TintOpacity" text="Deckkraft der Gebietsfärbung" />
+		<string id="KB_TintOpacityHint" text="[Standard: 0.15]" />
+		<string id="KB_Labels" text="Namensbeschriftungen der Königreiche" />
+		<string id="KB_LabelsHint" text="Zeigt beim Herauszoomen den Namen jedes Königreichs sowie die Anzahl seiner Lehen/Clans über seinem Gebiet. [Standard: aktiviert]" />
+		<string id="KB_LabelHeight" text="Beschriftungshöhe" />
+		<string id="KB_LabelHeightHint" text="Kamerahöhe, oberhalb der die Königreichsbeschriftungen angezeigt werden. Bei aktivierter Debug-Protokollierung zeigt die Hotkey-Meldung die aktuelle Kamerahöhe. [Standard: 300]" />
+		<string id="KB_TownPlateHeight" text="Stadt-Namensschilder ausblenden über" />
+		<string id="KB_TownPlateHeightHint" text="Kamerahöhe, oberhalb der die Namensschilder von Städten ausgeblendet werden, so wie das Grundspiel die Schilder von Dörfern/Burgen ausblendet. 0 = nie. [Standard: 600]" />
+		<string id="KB_Style" text="Grenzstil" />
+		<string id="KB_StyleHint" text="Durchgezogene, gestrichelte oder gepunktete Streifen. [Standard: Solid]" />
+		<string id="KB_Emph" text="Spielerkönigreich hervorheben" />
+		<string id="KB_EmphHint" text="Die Streifen deines Königreichs sind breiter und heller; andere werden abgeschwächt. [Standard: deaktiviert]" />
+		<string id="KB_War" text="Grenzen im Krieg pulsieren lassen" />
+		<string id="KB_WarHint" text="Streifen zwischen Königreichen im Krieg pulsieren. [Standard: aktiviert]" />
+		<string id="KB_Glow" text="Kürzlich geänderte Grenzen leuchten lassen" />
+		<string id="KB_GlowHint" text="Eine neu gewonnene Grenze leuchtet einen Tag lang. [Standard: aktiviert]" />
 	</strings>
 </base>

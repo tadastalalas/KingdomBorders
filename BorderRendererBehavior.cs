@@ -8,6 +8,8 @@ using TaleWorlds.CampaignSystem.Actions;
 using TaleWorlds.CampaignSystem.Settlements;
 using TaleWorlds.Engine;
 using TaleWorlds.Library;
+using TaleWorlds.Core;
+using TaleWorlds.Localization;
 
 namespace KingdomBorders
 {
@@ -18,7 +20,8 @@ namespace KingdomBorders
         FindingEdges,
         ClearingEntities,
         ProcessingSegments,
-        FlushingMeshes
+        FlushingMeshes,
+        BuildingTint
     }
 
     public class BorderRendererBehavior : CampaignBehaviorBase
@@ -37,11 +40,11 @@ namespace KingdomBorders
         // Drives one Stopwatch reused across all phases of a single rebuild.
         // Totals are logged when the rebuild transitions back to Idle.
         private readonly System.Diagnostics.Stopwatch _diagSw = new System.Diagnostics.Stopwatch();
-        private long _diagGridMs;
-        private long _diagEdgeChainMs;
-        private long _diagCullMs;
-        private long _diagSegmentMs;
-        private long _diagFlushMs;
+        private double _diagGridMs, _diagEdgeChainMs, _diagCullMs, _diagSegmentMs, _diagFlushMs, _diagTintMs;
+        private double _diagGridMax, _diagEdgeChainMax, _diagCullMax, _diagSegmentMax, _diagFlushMax, _diagTintMax;
+        private double _diagWorstFrameMs;
+        private int _diagFrames;
+        private bool _diagLogPending;
         private bool _diagInRebuild;
 
         // Incremental generation state
@@ -58,13 +61,17 @@ namespace KingdomBorders
         // Incremental flush state
         private List<KingdomMeshBuilder> _pendingFlush;
         private int _flushIndex;
+        private int _flushStripIndex; // cursor into _pendingFlush[_flushIndex].Strips
+        private int _flushCreated;
+        private int _flushPoints;
+        private int _flushFailed;
         private const int MaxRemovalsPerTick = 40; // tune against the new "cull=" line in the PERF log
         
-        // Budgeted by total sampled points (inner+outer vertices) rather than raw strip
-        // count — cost is driven by native terrain/water sampling per vertex, so a few long
-        // strips can cost far more than many short ones. Starting value; re-tune against the
-        // corrected "flush=" number in KingdomBorders.log once you've applied the bug fix above.
-        private const int MaxFlushPointsPerTick = 600;
+        // Sampling measured at ~3 µs/vertex → ~1.2 ms per tick. Mesh creation is the real cost
+        // and is limited separately to one strip per tick in FlushKingdomMeshesIncremental.
+        private const int MaxSampleVerticesPerTick = 400;
+        // Quads emitted per tick across chunk meshes; ~15 µs per quad at 64-quad meshes → ~3 ms.
+        private const int MaxQuadsPerTick = 192;
 
         // Queued regeneration — accumulated while builds may be in progress
         private HashSet<Settlement> _pendingRegenSettlements;
@@ -76,6 +83,7 @@ namespace KingdomBorders
 
         private bool _regenRequested;
         private bool _fullRebuildRequested;
+        private bool _labelInfoDirty;
 
         // Track MCM settings to detect changes and trigger rebuild
         private bool _lastShowOnWater;
@@ -89,29 +97,54 @@ namespace KingdomBorders
         private List<JunctionInfo> _junctions;
         private HashSet<long> _junctionKeys;
 
-        // === Cached border structure ===
-        // Persists completed strip geometry per kingdom so partial regeneration
-        // only rebuilds affected kingdoms, leaving the rest untouched.
-        private Dictionary<Kingdom, KingdomMeshBuilder> _cachedBuilders;
+        // === Built kingdoms ===
+        // Kingdoms whose strips are in the scene. null = nothing built yet, so a partial
+        // regeneration falls back to a full rebuild. The strip geometry itself is not kept:
+        // the scene entities and their content keys (BorderRenderer) are all a partial rebuild needs.
+        private HashSet<Kingdom> _cachedKingdoms;
 
         // Kingdoms whose borders need regeneration in the current partial build.
         // null means full rebuild (all kingdoms processed).
         private HashSet<Kingdom> _affectedKingdoms;
 
-        // Identity keys of strip entities that survived the AABB cull and are still
-        // in the scene. The flush phase passes this to the renderer so new strips
-        // matching one of these keys are not re-created (the existing entity stays).
+        // Identity keys of strips whose geometry is unchanged (content-hash diff); the flush skips re-creating them.
         private HashSet<long> _preservedStripKeys;
 
         public BorderRenderer Renderer { get; private set; }
 
         public Scene MapScene { get; private set; }
 
-        public bool IsVisible { get; private set; } = true;
+        private const int TintRowsPerTick = 4;
+        private Kingdom _lastPlayerKingdom;
+        private int _lastBorderStyle;
+        private bool _lastEmphasizePlayer;
+        private bool _lastOnlyPlayer;
+        private bool _lastShowTint;
+        private bool _lastWarHighlight;
 
-        public void ToggleVisibility()
+        public TerritoryTintRenderer Tint { get; private set; }
+
+        // 0 = off, 1 = borders, 2 = borders + tint, 3 = tint only
+        public int ViewMode { get; private set; } = 1;
+        public bool IsVisible => ViewMode == 1 || ViewMode == 2;
+        public bool IsTintVisible => ViewMode >= 2;
+        
+        public KingdomLabelRenderer Labels { get; private set; }
+        public bool AreLabelsVisible => ViewMode > 0 && (MCMSettings.Instance?.ShowKingdomLabels ?? true);
+
+        public void CycleViewMode()
         {
-            IsVisible = !IsVisible;
+            ViewMode = (ViewMode + 1) % ((MCMSettings.Instance?.ShowTerritoryTint ?? true) ? 4 : 2);
+            string text = ViewMode switch
+            {
+                0 => new TextObject("{=KB_ModeOff}Borders: off").ToString(),
+                1 => new TextObject("{=KB_ModeOn}Borders: on").ToString(),
+                2 => new TextObject("{=KB_ModeTint}Borders: on + territory tint").ToString(),
+                _ => new TextObject("{=KB_ModeTintOnly}Territory tint only").ToString()
+            };
+            if ((MCMSettings.Instance?.EnableDebugLogging ?? false) && MapScene != null)
+                text += $" (camera z {MapScene.LastFinalRenderCameraPosition.z:F0})";
+            InformationManager.DisplayMessage(new InformationMessage(text));
         }
 
         public override void RegisterEvents()
@@ -120,6 +153,8 @@ namespace KingdomBorders
             CampaignEvents.OnNewGameCreatedEvent.AddNonSerializedListener(this, OnNewGameCreated);
             CampaignEvents.OnSettlementOwnerChangedEvent.AddNonSerializedListener(this, OnSettlementOwnerChanged);
             CampaignEvents.OnClanChangedKingdomEvent.AddNonSerializedListener(this, OnClanChangedKingdom);
+            CampaignEvents.WarDeclared.AddNonSerializedListener(this, OnWarDeclared);
+            CampaignEvents.MakePeace.AddNonSerializedListener(this, OnMakePeace);
 
             // KingdomCreatedEvent / KingdomDestroyedEvent are intentionally NOT subscribed:
             //  - KingdomDestroyed fires AFTER every fief has already been transferred via
@@ -143,77 +178,87 @@ namespace KingdomBorders
         {
             BeginBuildBorders();
         }
+        
+        private void OnWarDeclared(IFaction a, IFaction b, DeclareWarAction.DeclareWarDetail detail) => Renderer?.RefreshWarFlags();
 
-        /// <summary>
-        /// Called every application frame from SubModule.OnApplicationTick.
-        /// Drives the build pipeline regardless of campaign tick state,
-        /// so borders generate even while the game is paused on load.
-        /// </summary>
+        private void OnMakePeace(IFaction a, IFaction b, MakePeaceAction.MakePeaceDetail detail) => Renderer?.RefreshWarFlags();
+
         public void ApplicationTick()
         {
-            // Deferred build: wait until the map screen is active before starting
-            // the pipeline. This avoids competing with the intro cinematic for
-            // frame time, preventing audio-visual desync and input lag on game start.
             if (_buildRequested)
             {
                 if (MapScreen.Instance == null)
-                    return; // Map not ready yet — skip all work this frame
-
+                    return;
                 _buildRequested = false;
                 StartBuildPipeline();
             }
+
+            long frameStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
             switch (_phase)
             {
                 case BuildPhase.BuildingGrid:
                     _diagSw.Restart();
                     if (_calculator.BuildTerritoryGridIncremental(GridRowsPerTick))
-                    {
                         _phase = BuildPhase.FindingEdges;
-                    }
-                    _diagSw.Stop();
-                    _diagGridMs += _diagSw.ElapsedMilliseconds;
+                    DiagEnd(ref _diagGridMs, ref _diagGridMax);
                     break;
 
                 case BuildPhase.FindingEdges:
                     _diagSw.Restart();
                     FindEdgesAndChain();
-                    _diagSw.Stop();
-                    _diagEdgeChainMs += _diagSw.ElapsedMilliseconds;
+                    DiagEnd(ref _diagEdgeChainMs, ref _diagEdgeChainMax);
                     if (_phase == BuildPhase.Idle)
                         DiagLogIfRebuildComplete();
                     break;
-                
+
                 case BuildPhase.ClearingEntities:
                     _diagSw.Restart();
                     if (Renderer.ContinueClearing(MaxRemovalsPerTick))
-                    {
-                        _phase = BuildPhase.ProcessingSegments;
-                    }
-                    _diagSw.Stop();
-                    _diagCullMs += _diagSw.ElapsedMilliseconds;
+                        _phase = BuildPhase.FlushingMeshes;
+                    DiagEnd(ref _diagCullMs, ref _diagCullMax);
                     break;
 
                 case BuildPhase.ProcessingSegments:
                     _diagSw.Restart();
                     ProcessPendingSegments();
-                    _diagSw.Stop();
-                    _diagSegmentMs += _diagSw.ElapsedMilliseconds;
+                    DiagEnd(ref _diagSegmentMs, ref _diagSegmentMax);
                     break;
 
                 case BuildPhase.FlushingMeshes:
                     _diagSw.Restart();
                     FlushKingdomMeshesIncremental();
-                    _diagSw.Stop();
-                    _diagFlushMs += _diagSw.ElapsedMilliseconds;
+                    DiagEnd(ref _diagFlushMs, ref _diagFlushMax);
                     if (_phase == BuildPhase.Idle)
                         DiagLogIfRebuildComplete();
+                    break;
+
+                case BuildPhase.BuildingTint:
+                    _diagSw.Restart();
+                    bool tintDone = Tint.Continue(TintRowsPerTick);
+                    DiagEnd(ref _diagTintMs, ref _diagTintMax);
+                    if (tintDone)
+                    {
+                        _phase = BuildPhase.Idle;
+                        DiagLogIfRebuildComplete();
+                    }
                     break;
 
                 case BuildPhase.Idle:
                     ProcessQueuedRegeneration();
                     break;
             }
+
+            // Whole-tick time of this behavior while a rebuild is active — this is the number the player "feels".
+            if (_diagInRebuild || _diagLogPending)
+            {
+                double frameMs = (System.Diagnostics.Stopwatch.GetTimestamp() - frameStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                _diagFrames++;
+                if (frameMs > _diagWorstFrameMs) _diagWorstFrameMs = frameMs;
+            }
+
+            if (_diagLogPending)
+                DiagEmit();
         }
 
         /// <summary>
@@ -256,6 +301,12 @@ namespace KingdomBorders
             if (_isInitialized)
             {
                 CheckMCMSettingsChanged();
+                CheckPlayerKingdomChanged();
+                if (_labelInfoDirty)
+                {
+                    _labelInfoDirty = false;
+                    Labels?.RefreshInfo();
+                }
             }
         }
 
@@ -265,21 +316,30 @@ namespace KingdomBorders
             if (settings == null)
                 return;
 
-            bool showOnWater = settings.ShowBordersOnWater;
-            float borderWidth = settings.BorderWidth;
-            float borderGap = settings.BorderGap;
-            float heightOffset = settings.HeightOffset;
-            int cornerSmoothing = settings.CornerSmoothing;
-            int gridResolution = settings.GridResolution;
-
-            if (showOnWater != _lastShowOnWater ||
-                Math.Abs(borderWidth - _lastBorderWidth) > 0.001f ||
-                Math.Abs(borderGap - _lastBorderGap) > 0.001f ||
-                Math.Abs(heightOffset - _lastHeightOffset) > 0.001f ||
-                cornerSmoothing != _lastCornerSmoothing ||
-                gridResolution != _lastGridResolution)
+            if (settings.HighlightWarBorders != _lastWarHighlight)
             {
-                ModLog.Log($"MCM settings changed — triggering full rebuild");
+                _lastWarHighlight = settings.HighlightWarBorders;
+                Renderer?.RefreshWarFlags();
+            }
+
+            if (settings.ShowTerritoryTint != _lastShowTint)
+            {
+                _lastShowTint = settings.ShowTerritoryTint;
+                if (_lastShowTint) _phase = BeginTintOrIdle();
+                else { Tint?.ClearAll(); if (ViewMode >= 2) ViewMode = 1; }
+            }
+
+            if (settings.ShowBordersOnWater != _lastShowOnWater ||
+                Math.Abs(settings.BorderWidth - _lastBorderWidth) > 0.001f ||
+                Math.Abs(settings.BorderGap - _lastBorderGap) > 0.001f ||
+                Math.Abs(settings.HeightOffset - _lastHeightOffset) > 0.001f ||
+                settings.CornerSmoothing != _lastCornerSmoothing ||
+                settings.GridResolution != _lastGridResolution ||
+                (settings.BorderStyle?.SelectedIndex ?? 0) != _lastBorderStyle ||
+                settings.EmphasizePlayerKingdom != _lastEmphasizePlayer ||
+                settings.OnlyPlayerBorders != _lastOnlyPlayer)
+            {
+                ModLog.Log("MCM settings changed — triggering full rebuild");
                 SnapshotMCMSettings();
                 FullRebuild();
             }
@@ -297,6 +357,32 @@ namespace KingdomBorders
             _lastHeightOffset = settings.HeightOffset;
             _lastCornerSmoothing = settings.CornerSmoothing;
             _lastGridResolution = settings.GridResolution;
+            _lastBorderStyle = settings.BorderStyle?.SelectedIndex ?? 0;
+            _lastEmphasizePlayer = settings.EmphasizePlayerKingdom;
+            _lastOnlyPlayer = settings.OnlyPlayerBorders;
+            _lastShowTint = settings.ShowTerritoryTint;
+            _lastWarHighlight = settings.HighlightWarBorders;
+            _lastPlayerKingdom = Clan.PlayerClan?.Kingdom;
+        }
+        
+        // Joining/leaving a kingdom with no fiefs doesn't move the grid, so the partial path
+        // would skip; baked player emphasis / player-only filter need a real rebuild.
+        private void CheckPlayerKingdomChanged()
+        {
+            Kingdom current = Clan.PlayerClan?.Kingdom;
+            if (current == _lastPlayerKingdom) return;
+            _lastPlayerKingdom = current;
+            MCMSettings s = MCMSettings.Instance;
+            if ((s?.OnlyPlayerBorders ?? false) || (s?.EmphasizePlayerKingdom ?? true))
+                FullRebuild();
+        }
+
+        private BuildPhase BeginTintOrIdle()
+        {
+            if (!(MCMSettings.Instance?.ShowTerritoryTint ?? true) || Tint == null || _calculator == null)
+                return BuildPhase.Idle;
+            Tint.Begin(_calculator);
+            return BuildPhase.BuildingTint;
         }
 
         /// <summary>
@@ -310,7 +396,9 @@ namespace KingdomBorders
             DiagBeginRebuild();
 
             Renderer.ClearAll();
-            _cachedBuilders = null;
+            Renderer.GlowKingdoms = null;
+            Tint?.ClearAll();
+            _cachedKingdoms = null;
             _affectedKingdoms = null; // null = full rebuild, process all kingdoms
             _preservedStripKeys = null;
             _calculator = new BorderCalculator(resolution: MCMSettings.Instance?.GridResolution ?? 150);
@@ -392,6 +480,7 @@ namespace KingdomBorders
             QueueAffectedKingdom(newKingdom);
 
             _regenRequested = true;
+            _labelInfoDirty = true; // fief counts changed even when the grid (and so the labels) does not
         }
 
         private void OnClanChangedKingdom(Clan clan, Kingdom oldKingdom, Kingdom newKingdom,
@@ -399,6 +488,8 @@ namespace KingdomBorders
         {
             if (!_isInitialized)
                 return;
+            
+            _labelInfoDirty = true;
 
             // --- Filter out events that don't affect borders ---
             // Verified against BLSource ChangeKingdomAction.ApplyInternal:
@@ -489,7 +580,7 @@ namespace KingdomBorders
 
             DiagBeginRebuild();
 
-            if (_cachedBuilders == null)
+            if (_cachedKingdoms == null)
             {
                 ModLog.Log("No cached builders — falling back to full rebuild");
                 FullRebuild();
@@ -511,8 +602,7 @@ namespace KingdomBorders
             {
                 gridChanged = _calculator.RebuildTerritoryGridForKingdoms(explicitlyAffectedKingdoms);
             }
-            _diagSw.Stop();
-            _diagGridMs += _diagSw.ElapsedMilliseconds;
+            DiagEnd(ref _diagGridMs, ref _diagGridMax);
 
             if (!gridChanged)
             {
@@ -536,20 +626,19 @@ namespace KingdomBorders
                 }
             }
 
+            HashSet<Kingdom> glow = null;
             if (changedSettlements != null)
             {
                 foreach (var s in changedSettlements)
                 {
-                    Kingdom kingdom;
-                    if (s.IsVillage)
-                        kingdom = s.Village?.Bound?.OwnerClan?.Kingdom;
-                    else
-                        kingdom = s.OwnerClan?.Kingdom;
-
-                    if (kingdom != null)
-                        directlyAffected.Add(kingdom);
+                    Kingdom kingdom = s.IsVillage ? s.Village?.Bound?.OwnerClan?.Kingdom : s.OwnerClan?.Kingdom;
+                    if (kingdom == null) continue;
+                    directlyAffected.Add(kingdom);
+                    glow ??= [];
+                    glow.Add(kingdom); // current owner = gaining side
                 }
             }
+            Renderer.GlowKingdoms = glow;
 
             // Safety net for the scoped edge search below: with zero directly-affected kingdoms
             // there's nothing to look for, and an empty result there would otherwise be
@@ -575,16 +664,11 @@ namespace KingdomBorders
 
             if (initialEdges.Count == 0)
             {
-                ModLog.Log("No border edges found after partial grid rebuild");
-                Renderer.ClearAll();
-                _cachedBuilders.Clear();
-                _preservedStripKeys = null;
-
-                _diagSw.Stop();
-                _diagEdgeChainMs += _diagSw.ElapsedMilliseconds;
-                DiagLogIfRebuildComplete();
-
-                _phase = BuildPhase.Idle;
+                // The directly affected kingdoms have no cells left (e.g. a kingdom's last fief went to a
+                // kingdomless clan). That says nothing about the rest of the map, so rebuild all of it
+                // instead of clearing it; a map that really has no border ends in FindEdgesAndChain.
+                ModLog.Log("No border edges for the affected kingdoms — falling back to full rebuild");
+                FullRebuild();
                 return;
             }
 
@@ -605,20 +689,6 @@ namespace KingdomBorders
                     _affectedKingdoms.Add(seg.KingdomA);
             }
 
-            var kingdomsInSegments = new HashSet<Kingdom>();
-            foreach (var seg in initialSegments)
-            {
-                if (seg.KingdomA != null) kingdomsInSegments.Add(seg.KingdomA);
-                if (seg.KingdomB != null) kingdomsInSegments.Add(seg.KingdomB);
-            }
-            foreach (var cachedKingdom in new List<Kingdom>(_cachedBuilders.Keys))
-            {
-                if (!kingdomsInSegments.Contains(cachedKingdom) && directlyAffected.Contains(cachedKingdom))
-                {
-                    _affectedKingdoms.Add(cachedKingdom);
-                }
-            }
-
             // Pass 2: re-search scoped to the now-final _affectedKingdoms set. Required for
             // correct junction reconstruction — a junction where an affected kingdom meets two
             // OTHER kingdoms needs the segment between those two others as well, even though
@@ -633,54 +703,26 @@ namespace KingdomBorders
             _junctions = _calculator.FindJunctions(segments);
             _junctionKeys = _calculator.GetJunctionKeys(_junctions);
 
-            _diagSw.Stop();
-            _diagEdgeChainMs += _diagSw.ElapsedMilliseconds;
+            DiagEnd(ref _diagEdgeChainMs, ref _diagEdgeChainMax);
 
             ModLog.Log($"Affected kingdoms: {_affectedKingdoms.Count} " +
-                        $"(directly: {directlyAffected.Count}, " +
-                        $"expanded with neighbors: {_affectedKingdoms.Count - directlyAffected.Count})");
-            foreach (var k in _affectedKingdoms)
+                       $"(directly: {directlyAffected.Count}, expanded with neighbors: {_affectedKingdoms.Count - directlyAffected.Count})");
+            foreach (Kingdom k in _affectedKingdoms)
                 ModLog.Log($"  - {k.Name}");
 
-            // --- AABB-based diff clear ---
-            // Classification (which entries to remove) happens synchronously here — cheap
-            // float-box comparisons. The actual native GameEntity.Remove() calls are deferred
-            // to the budgeted ClearingEntities phase.
-            _diagSw.Restart();
-            if (_calculator.HasLastRebuildBounds)
-            {
-                float borderGap = MCMSettings.Instance?.BorderGap ?? 0.30f;
-                float borderWidth = MCMSettings.Instance?.BorderWidth ?? 1.05f;
-                float stripMargin = (borderGap / 2f) + borderWidth + 1f;
+            foreach (Kingdom k in _affectedKingdoms)
+                _cachedKingdoms.Remove(k);
 
-                float minX = _calculator.LastRebuildMinX - stripMargin;
-                float minY = _calculator.LastRebuildMinY - stripMargin;
-                float maxX = _calculator.LastRebuildMaxX + stripMargin;
-                float maxY = _calculator.LastRebuildMaxY + stripMargin;
-
-                _preservedStripKeys = Renderer.BeginClearForKingdomsInBounds(
-                    _affectedKingdoms, minX, minY, maxX, maxY);
-            }
-            else
-            {
-                Renderer.BeginClearForKingdoms(_affectedKingdoms);
-                _preservedStripKeys = null;
-            }
-            _diagSw.Stop();
-            _diagCullMs += _diagSw.ElapsedMilliseconds;
-
-            foreach (var k in _affectedKingdoms)
-                _cachedBuilders.Remove(k);
-
-            ModLog.Log($"Queuing {segments.Count} border segments " +
-                       $"(preserved {_preservedStripKeys?.Count ?? 0} strips by AABB cull)...");
+            ModLog.Log($"Queuing {segments.Count} border segments...");
 
             _pendingSegments = segments;
             _pendingIndex = 0;
             _renderedCount = 0;
             _skippedCount = 0;
             _kingdomBuilders = new Dictionary<Kingdom, KingdomMeshBuilder>();
-            _phase = BuildPhase.ClearingEntities;
+            // Old strips are not removed yet — the content-hash diff at the end of ProcessPendingSegments
+            // decides which are stale once the new geometry exists.
+            _phase = BuildPhase.ProcessingSegments;
         }
 
         private void BeginBuildBorders()
@@ -717,6 +759,8 @@ namespace KingdomBorders
                 ModLog.Log("Scene obtained");
 
                 Renderer = new BorderRenderer(MapScene);
+                Tint = new TerritoryTintRenderer(MapScene);
+                Labels = new KingdomLabelRenderer();
 
                 var kingdoms = Kingdom.All;
                 ModLog.Log($"Active kingdoms: {kingdoms.Count}");
@@ -728,7 +772,7 @@ namespace KingdomBorders
 
                 SnapshotMCMSettings();
 
-                _cachedBuilders = null;
+                _cachedKingdoms = null;
                 _affectedKingdoms = null;
                 _calculator = new BorderCalculator(resolution: MCMSettings.Instance?.GridResolution ?? 150);
                 _calculator.CalculateMapBounds();
@@ -756,9 +800,11 @@ namespace KingdomBorders
             {
                 ModLog.Log("No border edges found — nothing to render");
 
-                DiagLogIfRebuildComplete();
-
-                _phase = BuildPhase.Idle;
+                // No border to draw, but the grid is new: labels and tint still have to follow it.
+                Labels?.Rebuild(_calculator);
+                _phase = BeginTintOrIdle();
+                if (_phase == BuildPhase.Idle)
+                    DiagLogIfRebuildComplete();
                 return;
             }
 
@@ -799,6 +845,13 @@ namespace KingdomBorders
         /// </summary>
         private bool ShouldProcessSegment(BorderSegment segment)
         {
+            if (MCMSettings.Instance?.OnlyPlayerBorders ?? false)
+            {
+                Kingdom pk = Clan.PlayerClan?.Kingdom;
+                if (pk != null && segment.KingdomA != pk && segment.KingdomB != pk && segment.ExclaveKingdom != pk)
+                    return false;
+            }
+            
             if (_affectedKingdoms == null)
                 return true; // Full rebuild — process everything
 
@@ -854,10 +907,9 @@ namespace KingdomBorders
                     continue;
                 }
 
-                // Closed-loop exclaves may legitimately have KingdomB == null (surrounded by
-                // kingdomless territory). Don't hard-reject them on that alone.
-                bool isExclave = segment.IsClosedLoop && segment.ExclaveKingdom != null;
-                if (!isExclave && (segment.KingdomA == null || segment.KingdomB == null))
+                // Both sides null can't occur (an edge needs differing cells). One null side means a kingdom
+                // borders kingdomless territory (independent / rebel clan): draw that kingdom's strip only.
+                if (segment.KingdomA == null && segment.KingdomB == null)
                 {
                     _skippedCount++;
                     continue;
@@ -907,15 +959,15 @@ namespace KingdomBorders
 
                 // Only add strips for kingdoms that are being rebuilt.
                 // Unaffected kingdoms already have their mesh entities in the scene.
-                if (IsKingdomAffected(leftKingdom))
+                if (leftKingdom != null && IsKingdomAffected(leftKingdom))
                 {
-                    GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
+                    GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter, rightKingdom));
                     _renderedCount++;
                 }
 
-                if (IsKingdomAffected(rightKingdom))
+                if (rightKingdom != null && IsKingdomAffected(rightKingdom))
                 {
-                    GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
+                    GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter, leftKingdom));
                     _renderedCount++;
                 }
 
@@ -952,7 +1004,6 @@ namespace KingdomBorders
 
             if (_pendingIndex >= _pendingSegments.Count)
             {
-                // Generate junction join caps before flushing
                 GenerateJunctionJoins(innerOffset, outerOffset, cornerSmoothing);
 
                 _pendingSegments = null;
@@ -961,8 +1012,23 @@ namespace KingdomBorders
 
                 _pendingFlush = new List<KingdomMeshBuilder>(_kingdomBuilders.Values);
                 _flushIndex = 0;
+                _flushStripIndex = 0;
+                _flushCreated = 0;
+                _flushPoints = 0;
+                _flushFailed = 0;
                 _kingdomBuilders = null;
-                _phase = BuildPhase.FlushingMeshes;
+
+                if (_affectedKingdoms != null)
+                {
+                    // Partial rebuild: keep every old strip whose geometry is unchanged, remove the rest.
+                    _preservedStripKeys = Renderer.BeginClearDiff(_affectedKingdoms, _pendingFlush);
+                    _phase = BuildPhase.ClearingEntities;
+                }
+                else
+                {
+                    _preservedStripKeys = null;
+                    _phase = BuildPhase.FlushingMeshes;
+                }
 
                 ModLog.Log($"Processed {_renderedCount} strips, skipped {_skippedCount} segments. Flushing {_pendingFlush.Count} kingdom meshes...");
             }
@@ -1013,12 +1079,12 @@ namespace KingdomBorders
             // Always draw both sides (subject to null and partial-rebuild gating).
             if (leftKingdom != null && IsKingdomAffected(leftKingdom))
             {
-                GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter));
+                GetBuilder(leftKingdom).Strips.Add((leftLineInner, leftLineOuter, rightKingdom));
                 _renderedCount++;
             }
             if (rightKingdom != null && IsKingdomAffected(rightKingdom))
             {
-                GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter));
+                GetBuilder(rightKingdom).Strips.Add((rightLineInner, rightLineOuter, leftKingdom));
                 _renderedCount++;
             }
         }
@@ -1026,8 +1092,7 @@ namespace KingdomBorders
         /// <summary>
         /// For each junction, finds pairs of arms that share a kingdom and generates
         /// a smooth bevel/miter join connecting their strip endpoints.
-        /// During partial rebuilds, only junctions involving affected kingdoms AND
-        /// positioned inside the rebuild AABB are processed.
+        /// During partial rebuilds, only junctions touching an affected kingdom are processed.
         /// </summary>
         private void GenerateJunctionJoins(float innerOffset, float outerOffset, int cornerSmoothing)
         {
@@ -1036,32 +1101,14 @@ namespace KingdomBorders
 
             int curveSegments = Math.Max(3, cornerSmoothing * 3);
             int joinsGenerated = 0;
-
-            // Precompute AABB bounds for outside-junction culling during partial rebuilds.
-            bool useAABB = _affectedKingdoms != null && _calculator.HasLastRebuildBounds;
-            float aabbMinX = 0f, aabbMinY = 0f, aabbMaxX = 0f, aabbMaxY = 0f;
-            if (useAABB)
-            {
-                float margin = outerOffset + 1f;
-                aabbMinX = _calculator.LastRebuildMinX - margin;
-                aabbMinY = _calculator.LastRebuildMinY - margin;
-                aabbMaxX = _calculator.LastRebuildMaxX + margin;
-                aabbMaxY = _calculator.LastRebuildMaxY + margin;
-            }
+            
+            Kingdom playerKingdom = Clan.PlayerClan?.Kingdom;
+            bool onlyPlayer = (MCMSettings.Instance?.OnlyPlayerBorders ?? false) && playerKingdom != null;
 
             foreach (var junction in _junctions)
             {
                 if (junction.Arms.Count < 2)
                     continue;
-
-                // AABB cull: junctions outside the changed region have preserved join entities
-                // in the scene; regenerating them is pure CPU waste even with skipKeys.
-                if (useAABB)
-                {
-                    Vec2 p = junction.Position;
-                    if (p.x < aabbMinX || p.x > aabbMaxX || p.y < aabbMinY || p.y > aabbMaxY)
-                        continue;
-                }
 
                 // During partial rebuild, skip junctions that don't touch any affected kingdom
                 if (_affectedKingdoms != null)
@@ -1091,6 +1138,9 @@ namespace KingdomBorders
                 foreach (var kingdom in kingdomsAtJunction)
                 {
                     if (kingdom == null)
+                        continue;
+                    
+                    if (onlyPlayer && kingdom != playerKingdom)
                         continue;
 
                     if (!IsKingdomAffected(kingdom))
@@ -1132,7 +1182,7 @@ namespace KingdomBorders
 
                         if (join.inner != null && join.inner.Count >= 2)
                         {
-                            GetBuilder(kingdom).Strips.Add((join.inner, join.outer));
+                            GetBuilder(kingdom).Strips.Add((join.inner, join.outer, null));
                             joinsGenerated++;
                         }
                     }
@@ -1149,48 +1199,65 @@ namespace KingdomBorders
 
                             if (join.inner != null && join.inner.Count >= 2)
                             {
-                                GetBuilder(kingdom).Strips.Add((join.inner, join.outer));
+                                GetBuilder(kingdom).Strips.Add((join.inner, join.outer, null));
                                 joinsGenerated++;
                             }
                         }
                     }
                 }
             }
-
             ModLog.Log($"Generated {joinsGenerated} junction join strips");
         }
 
-                private void FlushKingdomMeshesIncremental()
+        private void FlushKingdomMeshesIncremental()
         {
-            int pointsThisTick = 0;
+            int vertexBudget = MaxSampleVerticesPerTick;
+            int quadBudget = MaxQuadsPerTick;
             float heightOffset = MCMSettings.Instance?.HeightOffset ?? 0.55f;
 
             while (_flushIndex < _pendingFlush.Count)
             {
-                var builder = _pendingFlush[_flushIndex];
-                int builderPoints = CountBuilderPoints(builder);
+                KingdomMeshBuilder builder = _pendingFlush[_flushIndex];
+                List<(List<Vec2> inner, List<Vec2> outer, Kingdom other)> strips = builder.Strips;
 
-                if (pointsThisTick > 0 && pointsThisTick + builderPoints > MaxFlushPointsPerTick)
-                    break;
+                while (_flushStripIndex < strips.Count)
+                {
+                    StripFlushResult r = Renderer.ContinueStrip(builder, _flushStripIndex, heightOffset, _preservedStripKeys,
+                        ref vertexBudget, ref quadBudget);
+                    if (r == StripFlushResult.InProgress)
+                        return; // a budget ran out mid-strip — resume the same strip next tick
+
+                    if (r == StripFlushResult.Created)
+                    {
+                        _flushCreated++;
+                        _flushPoints += strips[_flushStripIndex].inner.Count + strips[_flushStripIndex].outer.Count;
+                    }
+                    else if (r == StripFlushResult.Failed)
+                        _flushFailed++;
+                    _flushStripIndex++;
+
+                    if (vertexBudget <= 0 || quadBudget <= 0)
+                        return;
+                }
+
+                if (_flushCreated > 0 || _flushFailed > 0)
+                    ModLog.Log($"  {builder.Kingdom.Name}: {_flushCreated} created, {_flushFailed} empty (of {strips.Count} candidates, {_flushPoints} points)");
 
                 _flushIndex++;
-                pointsThisTick += builderPoints;
-
-                int createdCount = Renderer.RenderKingdomStrips(builder, heightOffset, _preservedStripKeys);
-                if (createdCount > 0)
-                {
-                    ModLog.Log($"  {builder.Kingdom.Name}: {createdCount} strips (of {builder.Strips.Count} candidates, {builderPoints} points)");
-                }
+                _flushStripIndex = 0;
+                _flushCreated = 0;
+                _flushPoints = 0;
+                _flushFailed = 0;
             }
 
             if (_flushIndex >= _pendingFlush.Count)
             {
-                if (_cachedBuilders == null)
-                    _cachedBuilders = new Dictionary<Kingdom, KingdomMeshBuilder>();
+                if (_cachedKingdoms == null)
+                    _cachedKingdoms = new HashSet<Kingdom>();
 
                 foreach (var builder in _pendingFlush)
                 {
-                    _cachedBuilders[builder.Kingdom] = builder;
+                    _cachedKingdoms.Add(builder.Kingdom);
                 }
 
                 ModLog.Log($"Total entities: {Renderer.EntityCount}");
@@ -1198,7 +1265,7 @@ namespace KingdomBorders
                 if (_affectedKingdoms != null)
                 {
                     ModLog.Log($"=== Partial Rebuild Done ({_affectedKingdoms.Count} kingdoms regenerated, " +
-                               $"{_cachedBuilders.Count} total cached) ===");
+                               $"{_cachedKingdoms.Count} total cached) ===");
                 }
                 else
                 {
@@ -1209,30 +1276,26 @@ namespace KingdomBorders
                 _affectedKingdoms = null;
                 _preservedStripKeys = null;
 
-                _phase = BuildPhase.Idle;
+                Renderer.GlowKingdoms = null;
+                Labels?.Rebuild(_calculator);
+                _phase = BeginTintOrIdle();
             }
-        }
-
-        private static int CountBuilderPoints(KingdomMeshBuilder builder)
-        {
-            int total = 0;
-            for (int i = 0; i < builder.Strips.Count; i++)
-            {
-                total += builder.Strips[i].inner.Count + builder.Strips[i].outer.Count;
-            }
-            return total;
         }
 
         public void Cleanup()
         {
             Renderer?.ClearAll();
+            Tint?.ClearAll();
+            Labels?.Dispose();
+            Labels = null;
+            Tint = null;
             Renderer = null;
             MapScene = null;
             _calculator = null;
             _pendingSegments = null;
             _kingdomBuilders = null;
             _pendingFlush = null;
-            _cachedBuilders = null;
+            _cachedKingdoms = null;
             _affectedKingdoms = null;
             _preservedStripKeys = null;
             _junctions = null;
@@ -1254,17 +1317,45 @@ namespace KingdomBorders
 
         private void DiagBeginRebuild()
         {
-            _diagGridMs = _diagEdgeChainMs = _diagCullMs = _diagSegmentMs = _diagFlushMs = 0;
+            _diagGridMs = _diagEdgeChainMs = _diagCullMs = _diagSegmentMs = _diagFlushMs = _diagTintMs = 0;
+            _diagGridMax = _diagEdgeChainMax = _diagCullMax = _diagSegmentMax = _diagFlushMax = _diagTintMax = 0;
+            _diagWorstFrameMs = 0;
+            _diagFrames = 0;
+            if (Renderer != null) Renderer.DiagHeightMs = Renderer.DiagWaterMs = Renderer.DiagMeshMs = 0;
             _diagInRebuild = true;
+            _diagLogPending = false;
+            if (MCMSettings.Instance?.EnableDebugLogging ?? false)
+                InformationManager.DisplayMessage(new InformationMessage("[KB] Borders updating…"));
+        }
+        
+        private void DiagEnd(ref double total, ref double max)
+        {
+            _diagSw.Stop();
+            double ms = _diagSw.Elapsed.TotalMilliseconds;
+            total += ms;
+            if (ms > max) max = ms;
         }
 
+        // Deferred to the end of ApplicationTick so the final frame's time is included in the worst-frame figure.
         private void DiagLogIfRebuildComplete()
         {
             if (!_diagInRebuild) return;
             _diagInRebuild = false;
-            long total = _diagGridMs + _diagEdgeChainMs + _diagCullMs + _diagSegmentMs + _diagFlushMs;
-            ModLog.Log($"[PERF] Rebuild totals: grid={_diagGridMs}ms, edges+chain={_diagEdgeChainMs}ms, " +
-                       $"cull={_diagCullMs}ms, segments={_diagSegmentMs}ms, flush={_diagFlushMs}ms, total={total}ms");
+            _diagLogPending = true;
+        }
+        
+        private void DiagEmit()
+        {
+            _diagLogPending = false;
+            double total = _diagGridMs + _diagEdgeChainMs + _diagCullMs + _diagSegmentMs + _diagFlushMs + _diagTintMs;
+            ModLog.Log($"[PERF] totals: grid={_diagGridMs:F1} edges+chain={_diagEdgeChainMs:F1} cull={_diagCullMs:F1} " +
+                       $"segments={_diagSegmentMs:F1} flush={_diagFlushMs:F1} tint={_diagTintMs:F1} total={total:F1}ms over {_diagFrames} frames");
+            ModLog.Log($"[PERF] per-frame max: grid={_diagGridMax:F1} edges+chain={_diagEdgeChainMax:F1} cull={_diagCullMax:F1} " +
+                       $"segments={_diagSegmentMax:F1} flush={_diagFlushMax:F1} tint={_diagTintMax:F1} WORST FRAME={_diagWorstFrameMs:F1}ms");
+            if (Renderer != null)
+                ModLog.Log($"[PERF] flush split: height={Renderer.DiagHeightMs:F1} water={Renderer.DiagWaterMs:F1} mesh={Renderer.DiagMeshMs:F1}ms");
+            if (MCMSettings.Instance?.EnableDebugLogging ?? false)
+                InformationManager.DisplayMessage(new InformationMessage($"[KB] Borders updated: {total:F0} ms / {_diagFrames} frames / worst {_diagWorstFrameMs:F1} ms"));
         }
     }
 }
